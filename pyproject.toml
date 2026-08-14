@@ -21,7 +21,7 @@ dependencies = [
   "emcee>=3.1.6",
   "h5py>=3.15.1",
   "matplotlib>=3.10.8",
-  "nmrglue>=0.11",
+  "nmrglue",
   "numpy>=2.4.0",
   "pandas>=3.0.0",
   "pydantic>=2.5.0",
@@ -32,6 +32,9 @@ dependencies = [
   "tomli-w>=1.0.0",
   "typer>=0.9.0",
 ]
+
+[tool.uv.sources]
+nmrglue = { git = "https://github.com/jjhelmus/nmrglue" }
 
 [project.urls]
 Repository = "https://github.com/gbouvignies/peakfit"

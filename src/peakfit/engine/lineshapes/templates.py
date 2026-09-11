@@ -30,7 +30,12 @@ from typing import TYPE_CHECKING, Any, ClassVar, cast
 import numpy as np
 
 from peakfit.engine.lineshapes.base import ShapeBase
-from peakfit.engine.lineshapes.doublet import doublet_kernel, doublet_kernel_with_derivs
+from peakfit.engine.lineshapes.doublet import (
+    doublet_kernel,
+    doublet_kernel_from_offsets,
+    doublet_kernel_from_offsets_with_derivs,
+    doublet_kernel_with_derivs,
+)
 from peakfit.engine.lineshapes.utils import apply_phase, apply_phase_with_derivs
 from peakfit.engine.types import ClusterParameters, LineshapeResult
 
@@ -94,19 +99,44 @@ class SimpleSingletBase(ShapeBase):
     ) -> LineshapeResult:
         """Evaluate lineshape for a cluster of peaks."""
         positions = cluster_params.extras.get("cs", np.full(cluster_params.n_peaks, self.center))
-        lw_hz = cluster_params.extras.get("lw", np.full(cluster_params.n_peaks, 25.0))[None, :]
-
         dw_hz, sign = self._grid.compute_offsets(x_grid, positions)
+        result = self.evaluate_offsets(
+            dw_hz,
+            sign,
+            cluster_params,
+            compute_derivs=compute_derivs,
+        )
+        if not compute_derivs:
+            return result
+
+        derivatives = dict(result.derivatives)
+        if "offset" in derivatives:
+            derivatives["cs"] = derivatives.pop("offset") * (-self._grid.spec_params.ppm2hz(1.0))
+        return LineshapeResult(values=result.values, derivatives=derivatives)
+
+    def evaluate_offsets(
+        self,
+        offsets_hz: FloatArray,
+        sign: FloatArray,
+        cluster_params: ClusterParameters,
+        compute_derivs: bool = False,
+    ) -> LineshapeResult:
+        """Evaluate the profile on precomputed center-relative Hz offsets."""
+        lw_hz = cluster_params.extras.get("lw", np.full(cluster_params.n_peaks, 25.0))[None, :]
 
         extra_params = self._get_extra_params(cluster_params)
 
         if compute_derivs:
-            values, raw_derivs = type(self).kernel_with_derivs(dw_hz, lw_hz, *extra_params)
+            values, raw_derivs = type(self).kernel_with_derivs(
+                offsets_hz,
+                lw_hz,
+                *extra_params,
+            )
             values = sign * values
 
             derivs: dict[str, FloatArray] = {}
             if "dw" in raw_derivs:
-                derivs["cs"] = sign * raw_derivs["dw"] * (-self._grid.spec_params.ppm2hz(1.0))
+                derivs["offset"] = sign * raw_derivs["dw"]
             if "lw" in raw_derivs:
                 derivs["lw"] = sign * raw_derivs["lw"]
 
@@ -117,7 +147,7 @@ class SimpleSingletBase(ShapeBase):
                 derivatives={k: cast("FloatArray", v.real) for k, v in derivs.items()},
             )
 
-        values = sign * type(self).kernel(dw_hz, lw_hz, *extra_params)
+        values = sign * type(self).kernel(offsets_hz, lw_hz, *extra_params)
         return LineshapeResult(values=cast("FloatArray", values.real))
 
 
@@ -175,6 +205,8 @@ class SimpleDoubletBase(ShapeBase):
                 derivs["cs"] = raw_derivs["dw"] * (-self._grid.spec_params.ppm2hz(1.0))
             if "lw" in raw_derivs:
                 derivs["lw"] = raw_derivs["lw"]
+            if "j" in raw_derivs:
+                derivs["j"] = raw_derivs["j"]
 
             derivs = self._process_extra_derivs(derivs, raw_derivs)
             return LineshapeResult(values=values, derivatives=derivs)
@@ -184,6 +216,45 @@ class SimpleDoubletBase(ShapeBase):
             positions,
             j_coupling,
             self._grid,
+            kernel=type(self).kernel,
+            kernel_args=(lw_hz, *extra_params),
+        )
+        return LineshapeResult(values=values)
+
+    def evaluate_offsets(
+        self,
+        offsets_hz: FloatArray,
+        sign: FloatArray,
+        cluster_params: ClusterParameters,
+        compute_derivs: bool = False,
+    ) -> LineshapeResult:
+        """Evaluate the doublet on precomputed center-relative Hz offsets."""
+        lw_hz = cluster_params.extras.get("lw", np.full(cluster_params.n_peaks, 25.0))[None, :]
+        j_coupling = cluster_params.extras.get("j", np.zeros(cluster_params.n_peaks))
+        extra_params = self._get_extra_params(cluster_params)
+
+        if compute_derivs:
+            values, raw_derivs = doublet_kernel_from_offsets_with_derivs(
+                offsets_hz,
+                sign,
+                j_coupling,
+                kernel_with_derivs=type(self).kernel_with_derivs,
+                kernel_args=(lw_hz, *extra_params),
+            )
+            derivs: dict[str, FloatArray] = {}
+            if "dw" in raw_derivs:
+                derivs["offset"] = raw_derivs["dw"]
+            if "lw" in raw_derivs:
+                derivs["lw"] = raw_derivs["lw"]
+            if "j" in raw_derivs:
+                derivs["j"] = raw_derivs["j"]
+            derivs = self._process_extra_derivs(derivs, raw_derivs)
+            return LineshapeResult(values=values, derivatives=derivs)
+
+        values = doublet_kernel_from_offsets(
+            offsets_hz,
+            sign,
+            j_coupling,
             kernel=type(self).kernel,
             kernel_args=(lw_hz, *extra_params),
         )
@@ -234,18 +305,45 @@ class PhasedSingletBase(ShapeBase):
     ) -> LineshapeResult:
         """Evaluate lineshape for a cluster of peaks."""
         positions = cluster_params.extras.get("cs", np.full(cluster_params.n_peaks, self.center))
+        dw_hz, sign = self._grid.compute_offsets(x_grid, positions)
+        result = self.evaluate_offsets(
+            dw_hz,
+            sign,
+            cluster_params,
+            compute_derivs=compute_derivs,
+        )
+        if not compute_derivs:
+            return result
+
+        derivatives = dict(result.derivatives)
+        if "offset" in derivatives:
+            offset_derivative = derivatives.pop("offset")
+            derivatives["dw"] = offset_derivative
+            derivatives["cs"] = offset_derivative * (-self._grid.spec_params.ppm2hz(1.0))
+        return LineshapeResult(values=result.values, derivatives=derivatives)
+
+    def evaluate_offsets(
+        self,
+        offsets_hz: FloatArray,
+        sign: FloatArray,
+        cluster_params: ClusterParameters,
+        compute_derivs: bool = False,
+    ) -> LineshapeResult:
+        """Evaluate the phased profile on precomputed Hz offsets."""
         lw_hz = cluster_params.extras.get("lw", np.full(cluster_params.n_peaks, 20.0))
         phases = cluster_params.extras.get("phase", np.zeros(cluster_params.n_peaks))
 
-        dw_hz, sign = self._grid.compute_offsets(x_grid, positions)
-
         if compute_derivs:
-            z_values, z_derivs = type(self).kernel_with_derivs(dw_hz, lw_hz, self._kernel_state)
+            z_values, z_derivs = type(self).kernel_with_derivs(
+                offsets_hz,
+                lw_hz,
+                self._kernel_state,
+            )
             values, derivs = apply_phase_with_derivs(z_values, z_derivs, phases, self._aq)
             values = sign * values
 
             if "dw" in derivs:
-                derivs["cs"] = sign * derivs["dw"] * (-self._grid.spec_params.ppm2hz(1.0))
+                derivs["offset"] = sign * derivs.pop("dw")
             if "lw" in derivs:
                 derivs["lw"] = sign * derivs["lw"]
             if "phase" in derivs:
@@ -253,7 +351,7 @@ class PhasedSingletBase(ShapeBase):
 
             return LineshapeResult(values=values, derivatives=derivs)
 
-        z_values = type(self).kernel(dw_hz, lw_hz, self._kernel_state)
+        z_values = type(self).kernel(offsets_hz, lw_hz, self._kernel_state)
         values = sign * apply_phase(z_values, phases)
         return LineshapeResult(values=values)
 
@@ -311,6 +409,8 @@ class PhasedDoubletBase(ShapeBase):
                 derivs["cs"] = derivs["dw"] * (-self._grid.spec_params.ppm2hz(1.0))
             if "lw" in derivs:
                 derivs["lw"] = derivs["lw"]
+            if "j" in derivs:
+                derivs["j"] = derivs["j"]
 
             return LineshapeResult(values=values, derivatives=derivs)
 
@@ -324,6 +424,40 @@ class PhasedDoubletBase(ShapeBase):
         )
         values = apply_phase(z_values, phases)
         return LineshapeResult(values=values)
+
+    def evaluate_offsets(
+        self,
+        offsets_hz: FloatArray,
+        sign: FloatArray,
+        cluster_params: ClusterParameters,
+        compute_derivs: bool = False,
+    ) -> LineshapeResult:
+        """Evaluate the phased doublet on precomputed Hz offsets."""
+        lw_hz = cluster_params.extras.get("lw", np.full(cluster_params.n_peaks, 20.0))
+        j_coupling = cluster_params.extras.get("j", np.zeros(cluster_params.n_peaks))
+        phases = cluster_params.extras.get("phase", np.zeros(cluster_params.n_peaks))
+
+        if compute_derivs:
+            z_values, z_derivs = doublet_kernel_from_offsets_with_derivs(
+                offsets_hz,
+                sign,
+                j_coupling,
+                kernel_with_derivs=type(self).kernel_with_derivs,
+                kernel_args=(lw_hz, self._kernel_state),
+            )
+            values, derivs = apply_phase_with_derivs(z_values, z_derivs, phases, self._aq)
+            if "dw" in derivs:
+                derivs["offset"] = derivs.pop("dw")
+            return LineshapeResult(values=values, derivatives=derivs)
+
+        z_values = doublet_kernel_from_offsets(
+            offsets_hz,
+            sign,
+            j_coupling,
+            kernel=type(self).kernel,
+            kernel_args=(lw_hz, self._kernel_state),
+        )
+        return LineshapeResult(values=apply_phase(z_values, phases))
 
 
 __all__ = [

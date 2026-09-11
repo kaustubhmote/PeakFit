@@ -1,7 +1,7 @@
 # Evaluate profiles on precomputed offsets
 
 Type: task
-Status: ready-for-agent
+Status: resolved
 Blocked by: 01
 
 ## Objective
@@ -24,3 +24,7 @@ Every existing profile can evaluate the same point grid from precomputed Hz
 offsets, and zero-tilt values match the current implementation.
 
 ## Comments
+
+Implemented through the shared singlet and doublet templates. Offset-based
+evaluation covers all twelve registered profiles and preserves grid-based
+values and derivatives.

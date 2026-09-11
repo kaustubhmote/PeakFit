@@ -156,6 +156,16 @@ class Shape(Protocol):
         """Evaluate lineshape for a cluster of peaks."""
         ...
 
+    def evaluate_offsets(
+        self,
+        offsets_hz: FloatArray,
+        sign: FloatArray,
+        cluster_params: ClusterParameters,
+        compute_derivs: bool = False,
+    ) -> LineshapeResult:
+        """Evaluate a lineshape on precomputed center-relative Hz offsets."""
+        ...
+
     def get_cluster_parameters(
         self,
         peaks: Any,

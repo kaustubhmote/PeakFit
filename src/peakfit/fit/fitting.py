@@ -241,7 +241,7 @@ def run_fit(
 
     try:
         params = Parameters.from_peaks(data.peaks, fixed=False)
-        n_workers = workers if workers > 0 else multiprocessing.cpu_count()
+        n_workers = _resolve_worker_count(workers, len(data.clusters))
 
         if reporter:
             reporter.info(f"Fitting {len(data.clusters)} clusters with {n_workers} workers.")
@@ -267,6 +267,12 @@ def run_fit(
         )
     finally:
         logger.setLevel(prev_level)
+
+
+def _resolve_worker_count(requested: int, cluster_count: int) -> int:
+    """Use no more worker processes than there are independent clusters."""
+    available = requested if requested > 0 else multiprocessing.cpu_count()
+    return max(1, min(available, max(1, cluster_count)))
 
 
 def _calc_total_steps(data: LoadedData, config: PeakFitConfig) -> int:

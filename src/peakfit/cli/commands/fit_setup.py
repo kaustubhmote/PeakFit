@@ -34,6 +34,7 @@ def build_fit_config(
     noise: float | None,
     contour_level: float | None,
     lineshape: LineshapeName,
+    tilted: bool,
     refine: int,
     fixed: bool,
     jx: bool,
@@ -77,6 +78,7 @@ def build_fit_config(
     cfg = PeakFitConfig(
         fitting=FitConfig(
             lineshape=lineshape,
+            tilted=tilted,
             refine_iterations=refine,
             fix_positions=fixed,
             fit_j_coupling=jx,

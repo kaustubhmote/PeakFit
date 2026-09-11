@@ -30,6 +30,7 @@ def test_generated_default_config_is_valid() -> None:
 
     assert config.output.formats == ["json", "csv"]
     assert not config.output.save_simulated
+    assert not config.fitting.tilted
 
 
 def test_redundant_strategy_name_config_is_rejected() -> None:

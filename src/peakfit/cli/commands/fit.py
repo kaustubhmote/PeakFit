@@ -93,6 +93,10 @@ def fit_command(
         LineshapeName,
         typer.Option("--lineshape", "-l", help="Lineshape model"),
     ] = "auto",
+    tilted: Annotated[
+        bool,
+        typer.Option("--tilted/--axis-aligned", help="Fit rotated two-dimensional peaks"),
+    ] = False,
     refine: Annotated[
         int,
         typer.Option(
@@ -194,6 +198,7 @@ def fit_command(
         noise=noise,
         contour_level=contour_level,
         lineshape=lineshape,
+        tilted=tilted,
         refine=refine,
         fixed=fixed,
         jx=jx,
@@ -306,6 +311,7 @@ def _show_headless_command_summary(
                 {
                     "Optimizer": optimizer,
                     "Lineshape": str(fit_config.fitting.lineshape),
+                    "Geometry": "Tilted" if fit_config.fitting.tilted else "Axis aligned",
                     "Optimizer passes": str(fit_config.fitting.refine_iterations),
                     "Auto-pick step mode": "Yes" if auto_pick_step else "No",
                     "Workers": "All CPUs" if workers == -1 else str(workers),

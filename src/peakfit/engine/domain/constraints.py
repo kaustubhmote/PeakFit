@@ -114,7 +114,7 @@ class PeakConstraints(BaseModel):
                 "position_windows",
                 "parameters",
             },
-            key_predicate=lambda key: re.match(r"^F\d+\.\w+$", key) is not None,
+            key_predicate=lambda key: re.match(r"^F\d+(?:-F\d+)?\.\w+$", key) is not None,
             normalize_value=lambda value: {"value": value},
         )
 

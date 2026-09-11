@@ -74,6 +74,10 @@ class FitConfig(BaseModel):
         default="auto",
         description="Lineshape model to use. 'auto' detects from NMRPipe apodization.",
     )
+    tilted: bool = Field(
+        default=False,
+        description="Fit rotated peaks in a two-dimensional spectral plane.",
+    )
     refine_iterations: Annotated[int, Field(le=20)] = Field(
         default=1,
         description="Number of optimizer passes; corrections update between passes.",

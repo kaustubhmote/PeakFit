@@ -1,10 +1,13 @@
 """Behavior tests for tilted two-dimensional lineshapes."""
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 
 from peakfit.engine.domain.cluster import Cluster
-from peakfit.engine.domain.config import FitConfig
+from peakfit.engine.domain.config import FitConfig, PeakFitConfig
+from peakfit.engine.domain.constraints import ParameterConfig, PeakConstraints, apply_constraints
 from peakfit.engine.domain.param_map import ParameterMap
 from peakfit.engine.domain.peaks import Peak
 from peakfit.engine.domain.spectrum import Spectra, SpectralParameters
@@ -12,6 +15,9 @@ from peakfit.engine.lineshapes.create import create_shapes
 from peakfit.engine.lineshapes.gaussian.kernel import kernel as gaussian_kernel
 from peakfit.engine.lineshapes.tilt import rotate_ppm_offsets
 from peakfit.engine.types import ClusterParameters
+from peakfit.fit import fitting
+from peakfit.io.readers.peaks import read_sparky_list
+from peakfit.shared.exceptions import DataIOError
 
 REGISTERED_LINESHAPES = (
     "gaussian",
@@ -27,6 +33,73 @@ REGISTERED_LINESHAPES = (
     "no_apod",
     "no_apod_doublet",
 )
+
+
+def test_tilted_fitting_is_opt_in() -> None:
+    assert FitConfig().tilted is False
+    assert FitConfig(tilted=True).tilted is True
+
+
+def test_peak_reader_marks_peaks_as_tilted(tmp_path: Path) -> None:
+    peak_list = tmp_path / "peaks.list"
+    peak_list.write_text("P1 120.0 8.0\n")
+
+    peaks = read_sparky_list(
+        peak_list,
+        make_2d_spectra(),
+        ["gaussian", "gaussian"],
+        FitConfig(tilted=True),
+    )
+
+    assert len(peaks) == 1
+    assert peaks[0].tilted is True
+
+
+def test_per_peak_constraints_accept_a_tilt_axis_pair() -> None:
+    constraints = PeakConstraints.model_validate(
+        {"F2-F3.tilt": {"value": 35.0, "min": -60.0, "max": 60.0}}
+    )
+
+    tilt = constraints.parameters["F2-F3.tilt"]
+    assert tilt.value == 35.0
+    assert tilt.min == -60.0
+    assert tilt.max == 60.0
+
+    spectra = make_2d_spectra()
+    peak = Peak(
+        name="P1",
+        positions=np.array([120.0, 8.0]),
+        shapes=create_shapes(
+            spectra,
+            FitConfig(),
+            "P1",
+            [120.0, 8.0],
+            ["gaussian", "gaussian"],
+        ),
+        tilted=True,
+    )
+    params = apply_constraints(
+        peak.create_params(),
+        ParameterConfig(peaks={"P1": constraints}),
+    )
+    assert params["P1.F2-F3.tilt"].value == 35.0
+
+
+def test_loading_rejects_tilted_fit_without_two_spectral_dimensions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(fitting, "read_spectra", lambda *_args: make_1d_spectra())
+
+    with pytest.raises(
+        DataIOError,
+        match="Tilted fitting requires exactly two spectral dimensions; input has 1",
+    ):
+        fitting.load_data(
+            Path("ignored.ft1"),
+            None,
+            None,
+            PeakFitConfig(fitting=FitConfig(tilted=True)),
+        )
 
 
 def make_1d_spectra(size: int = 32) -> Spectra:

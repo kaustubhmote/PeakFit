@@ -52,7 +52,14 @@ def _create_peak_list(
         pos_array = np.array(pos_values, dtype=np.float64)
 
         shapes = create_shapes(spectra, config, str(name), pos_values, shape_names)
-        peak_list.append(Peak(name=str(name), positions=pos_array, shapes=shapes))
+        peak_list.append(
+            Peak(
+                name=str(name),
+                positions=pos_array,
+                shapes=shapes,
+                tilted=config.tilted,
+            )
+        )
 
     return peak_list
 
@@ -72,7 +79,14 @@ def _create_peak_list_from_rows(
         pos_array = np.array(pos_values, dtype=np.float64)
 
         shapes = create_shapes(spectra, config, str(name), pos_values, shape_names)
-        peak_list.append(Peak(name=str(name), positions=pos_array, shapes=shapes))
+        peak_list.append(
+            Peak(
+                name=str(name),
+                positions=pos_array,
+                shapes=shapes,
+                tilted=config.tilted,
+            )
+        )
 
     return peak_list
 

@@ -39,6 +39,8 @@ from peakfit.io.writers.run_files import write_readme, write_simulated_spectra
 from peakfit.shared.exceptions import DataIOError
 from peakfit.shared.paths import format_path
 
+_TILTED_SPECTRAL_DIMENSIONS = 2
+
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
     from pathlib import Path
@@ -76,6 +78,11 @@ def load_data(
     """
     # 1. Load Spectra
     spectra = read_spectra(spectrum_path, z_values_path, config.exclude_planes)
+    if config.fitting.tilted and spectra.n_spectral_dims != _TILTED_SPECTRAL_DIMENSIONS:
+        raise DataIOError(
+            "Tilted fitting requires exactly two spectral dimensions; "
+            f"input has {spectra.n_spectral_dims}."
+        )
 
     # 2. Estimate Noise
     computed_noise = prepare_noise_level(config.noise_level, spectra)

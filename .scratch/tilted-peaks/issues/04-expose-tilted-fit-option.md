@@ -1,7 +1,7 @@
 # Expose the tilted fit option
 
 Type: task
-Status: ready-for-agent
+Status: resolved
 Blocked by: 03
 
 ## Objective
@@ -24,3 +24,7 @@ Both command-line and configuration-file users can request a tilted fit, and
 unsupported inputs fail early with a clear message.
 
 ## Comments
+
+Implemented as `FitConfig.tilted` and `peakfit fit --tilted`. Peak-list readers
+carry the setting into `Peak`, axis-pair constraints apply normally, and data
+with any spectral dimensionality other than two fails during loading.

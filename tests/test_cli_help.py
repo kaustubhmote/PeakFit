@@ -27,6 +27,13 @@ def test_fit_help_describes_plane_values_without_renaming_the_option() -> None:
     assert "Z-dimension" not in help_text
 
 
+def test_fit_help_exposes_tilted_peak_geometry() -> None:
+    help_text = rendered_help("fit")
+    assert "--tilted" in help_text
+    assert "Fit rotated" in help_text
+    assert "two-dimensional" in help_text
+
+
 def test_plot_spectrum_help_mentions_bruker_input() -> None:
     help_text = rendered_help("plot", "spectrum")
 

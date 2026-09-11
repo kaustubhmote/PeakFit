@@ -1,7 +1,7 @@
 # Lock the tilted-model contract
 
 Type: task
-Status: ready-for-agent
+Status: resolved
 
 ## Objective
 
@@ -21,3 +21,6 @@ changing the fitting pipeline.
 The mathematical contract is executable without constructing a CLI fit.
 
 ## Comments
+
+Implemented in the first numerical slice. The tests use literal zero-degree,
+45-degree, mirrored-angle, and closed-form Gaussian reference values.

@@ -44,8 +44,8 @@ def capture_output_metadata(config: dict[str, Any], input_files: dict[str, Path]
     for name, path in input_files.items():
         if path.exists():
             run_metadata.input_files[name] = {
-                "path": path.name,
-                "checksum_sha256": _compute_file_checksum(path),
+                "path": str(path.resolve()),
+                "checksum_sha256": _compute_path_checksum(path),
             }
     return run_metadata
 
@@ -64,11 +64,17 @@ def _current_git_commit() -> str | None:
     return result.stdout.strip()[:12] if result.returncode == 0 else None
 
 
-def _compute_file_checksum(path: Path, algorithm: str = "sha256") -> str:
+def _compute_path_checksum(path: Path, algorithm: str = "sha256") -> str:
+    """Hash one file or a directory tree in a stable relative-path order."""
     digest = hashlib.new(algorithm)
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(8192), b""):
-            digest.update(chunk)
+    files = [path] if path.is_file() else sorted(item for item in path.rglob("*") if item.is_file())
+    for file_path in files:
+        if path.is_dir():
+            digest.update(file_path.relative_to(path).as_posix().encode("utf-8"))
+            digest.update(b"\0")
+        with file_path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(8192), b""):
+                digest.update(chunk)
     return digest.hexdigest()
 
 

@@ -121,7 +121,9 @@ def load_data(
             noise_val,
             contour,
             config,
-            cycle_callback=_cycle_callback if (reporter or user_cycle_callback) else None,
+            # A cycle callback enables interactive candidate selection. A reporter
+            # alone must not change the automatic algorithm's control flow.
+            cycle_callback=_cycle_callback if user_cycle_callback is not None else None,
         )
         peaks = auto_result.peaks
         if reporter is not None:

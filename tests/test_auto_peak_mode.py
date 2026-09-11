@@ -14,6 +14,7 @@ from peakfit.engine.domain.peaks import Peak
 from peakfit.fit.fitting import load_data
 from peakfit.fit.validation import validate_inputs
 from peakfit.shared.exceptions import DataIOError
+from peakfit.shared.reporter import NullReporter
 
 if TYPE_CHECKING:
     from peakfit.engine.types import Shape
@@ -83,6 +84,40 @@ def test_load_data_uses_auto_pick_when_peaklist_missing(monkeypatch: pytest.Monk
     assert captured["cycle_callback"] is None
     assert captured["cluster_peaks"] == auto_peaks
     assert captured["cluster_contour"] == pytest.approx(10.0)
+
+
+def test_reporter_does_not_enable_interactive_auto_pick(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spectra = SimpleNamespace(data=np.zeros((1, 16), dtype=np.float64))
+    config = PeakFitConfig()
+    captured: dict[str, object] = {}
+    auto_peaks = [_peak("p1", (8.1, 120.2))]
+
+    monkeypatch.setattr("peakfit.fit.fitting.read_spectra", lambda *_args, **_kwargs: spectra)
+    monkeypatch.setattr("peakfit.fit.fitting.prepare_noise_level", lambda *_args, **_kwargs: 2.0)
+    monkeypatch.setattr(
+        "peakfit.fit.fitting.get_shape_names", lambda *_args, **_kwargs: ["no_apod"]
+    )
+    monkeypatch.setattr("peakfit.fit.fitting.create_clusters", lambda *_args, **_kwargs: [])
+
+    def _auto_pick(*_args: object, cycle_callback: object | None = None, **_kwargs: object):
+        captured["cycle_callback"] = cycle_callback
+        return AutoPickResult(
+            peaks=auto_peaks,
+            diagnostics=AutoPickDiagnostics(
+                iterations=1,
+                accepted_rois=1,
+                rejected_rois=0,
+                accepted_peaks=1,
+                stopped_by_user=False,
+            ),
+        )
+
+    monkeypatch.setattr("peakfit.fit.fitting.auto_pick_peaks", _auto_pick)
+    load_data(Path("spectrum.ft2"), None, None, config, reporter=NullReporter())
+
+    assert captured["cycle_callback"] is None
 
 
 def test_load_data_raises_when_auto_pick_disabled(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -36,13 +36,26 @@ peakfit --help
 
 ## Fit
 
-Use an NMRPipe spectrum (`.ft2` or `.ft3`) and a peak list:
+Use an NMRPipe spectrum (`.ft2` or `.ft3`) or a processed Bruker spectrum and a peak list:
 
 ```bash
 peakfit fit data/pseudo3d.ft2 data/pseudo3d.list \
   --z-values data/b1_offsets.txt \
   --output Fits
 ```
+
+For Bruker data, pass any of these paths:
+
+```bash
+peakfit fit /data/sample/10/pdata/1 peaks.list
+peakfit fit /data/sample/10/pdata/1/2rr peaks.list
+peakfit fit /data/sample/10 peaks.list
+```
+
+The last form selects `pdata/1`. If an experiment has several processed datasets
+and no `pdata/1`, select the required `pdata/<procno>` directory. PeakFit reads
+processed `1r`, `2rr`, `3rrr`, and `4rrrr` data; it does not process raw Bruker
+`fid` or `ser` data.
 
 `peakfit fit` validates inputs before fitting. Omitting the peak list invokes the
 experimental automatic peak-picking workflow; provide a peak list for routine
@@ -76,6 +89,10 @@ Peak lists can be:
 For pseudo-ND data, use the retained `--z-values` option to supply one plane
 value per plane. CEST examples use B1 offset values; CPMG plotting additionally
 needs `--time-t2`.
+
+For Bruker spectra, `--lineshape auto` uses `no_apod` when `WDW=0` and the
+robust `pvoigt` model for other window functions. Select an explicit lineshape
+when you need a processing-specific model.
 
 ## Outputs
 

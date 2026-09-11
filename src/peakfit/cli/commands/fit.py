@@ -25,6 +25,7 @@ from peakfit.fit.fitting import (
     write_fit_run_outputs,
 )
 from peakfit.fit.validation import validate_inputs
+from peakfit.io.readers.spectrum import resolve_spectrum_path
 from peakfit.ui.branding import show_command_summary
 from peakfit.ui.console import Verbosity, console, display_path, set_verbosity
 from peakfit.ui.messages import bullet, error, show_error_with_details
@@ -44,9 +45,9 @@ def fit_command(
     spectrum: Annotated[
         Path,
         typer.Argument(
-            help="NMRPipe spectrum file (.ft2, .ft3)",
-            exists=True,
-            dir_okay=False,
+            help="NMRPipe file or processed Bruker spectrum",
+            exists=False,
+            dir_okay=True,
             resolve_path=True,
         ),
     ],
@@ -168,6 +169,7 @@ def fit_command(
 
     Examples:
         peakfit fit spectrum.ft2 peaks.list
+        peakfit fit /data/sample/10/pdata/1 peaks.list
         peakfit fit spectrum.ft2 peaks.list -z z_values.txt -o results/
         peakfit fit spectrum.ft2 peaks.list --config settings.toml
     """
@@ -181,6 +183,8 @@ def fit_command(
         for e in validation.errors:
             bullet(str(e), style="error")
         raise typer.Exit(1)
+
+    spectrum = resolve_spectrum_path(spectrum)
 
     fit_config = build_fit_config(
         config=config,

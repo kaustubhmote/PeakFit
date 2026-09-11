@@ -4,13 +4,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Self, cast
 
-import nmrglue as ng
 import numpy as np
 import pandas as pd
 
+from peakfit.io.readers.spectrum import read_spectra
 from peakfit.plot.widgets.matplotlib_backend import MatplotlibBackend
 
 if TYPE_CHECKING:
+    from peakfit.engine.domain.spectrum import SpectralParameters
     from peakfit.plot.reconstruction import SpectraReconstructor
     from peakfit.shared.typing import FloatArray
 
@@ -37,6 +38,7 @@ from peakfit.shared.paths import format_path
 CONTOUR_NUM = 25
 CONTOUR_FACTOR = 1.40
 _MIN_VIEWER_NDIM = 3
+_MIN_VIEWER_SPECTRAL_DIMS = 2
 CONTOUR_COLORS = {
     "spectrum_exp": "C0",
     "spectrum_sim": "C1",
@@ -62,31 +64,28 @@ class NMRData:
     @classmethod
     def from_file(cls, filename: str) -> Self:
         """Load an NMR file and return a populated NMRData instance."""
-        dic, data = ng.pipe.read(filename)
-        data = data.astype(np.float32)
-        data, xlim, ylim = cls._process_data(dic, data)
-        return cls(filename, dic, data, xlim, ylim)
+        spectra = read_spectra(Path(filename))
+        data, xlim, ylim = cls._process_data(spectra.data, spectra.spectral_params)
+        return cls(filename, spectra.dic, data, xlim, ylim)
 
     @staticmethod
     def _process_data(
-        dic: dict[str, Any], data: FloatArray
+        data: FloatArray, spectral_params: list[SpectralParameters]
     ) -> tuple[FloatArray, tuple[float, float], tuple[float, float]]:
-        udic = ng.pipe.guess_udic(dic, data)
-        first_is_freq = udic[0]["freq"] if udic else True
-        if first_is_freq:
-            data = data.reshape(1, *data.shape)
-
         if data.ndim < _MIN_VIEWER_NDIM:
             msg = f"Unsupported data dimensionality after normalization: {data.ndim}"
             raise ValueError(msg)
+        if len(spectral_params) < _MIN_VIEWER_SPECTRAL_DIMS:
+            msg = (
+                "Spectrum viewer requires at least two spectral dimensions, "
+                f"got {len(spectral_params)}"
+            )
+            raise ValueError(msg)
 
-        dim_y = data.ndim - 2
-        dim_x = data.ndim - 1
-        uc_y, uc_x = (
-            ng.pipe.make_uc(dic, data, dim=dim_y),
-            ng.pipe.make_uc(dic, data, dim=dim_x),
-        )
-        return data, uc_x.ppm_limits(), uc_y.ppm_limits()
+        y_axis, x_axis = spectral_params[-2:]
+        xlim = (float(x_axis.pts2ppm(0)), float(x_axis.pts2ppm(data.shape[-1] - 1)))
+        ylim = (float(y_axis.pts2ppm(0)), float(y_axis.pts2ppm(data.shape[-2] - 1)))
+        return data, xlim, ylim
 
     def unalias_y(self, y0: FloatArray) -> FloatArray:
         """Unwrap Y-axis positions if needed, keeping values within y-limits."""

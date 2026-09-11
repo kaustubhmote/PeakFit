@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from peakfit.engine.domain.peaks import Peak
+from peakfit.engine.lineshapes.tilt import rotate_ppm_offsets
 from peakfit.shared.typing import FloatArray, IntArray
 
 if TYPE_CHECKING:
@@ -15,6 +16,7 @@ if TYPE_CHECKING:
     from peakfit.engine.domain.params_scalar import Parameters
 
 _CLUSTER_DATA_NDIM = 2
+_TILTED_DIMENSIONS = 2
 
 
 @dataclass(slots=True)
@@ -143,6 +145,20 @@ class Cluster:
         n_dims = len(grid_dims)
         compute_derivatives = d_matrix is not None and param_map is not None
 
+        has_tilted_peak = any(peak.tilted for peak in peaks)
+        has_nonzero_tilt = any(
+            peak.tilted and params[peak.tilt_parameter_id.name].value != 0.0 for peak in peaks
+        )
+        if has_tilted_peak and (compute_derivatives or has_nonzero_tilt):
+            return _evaluate_tilted_peaks(
+                peaks,
+                params,
+                grid_dims,
+                d_matrix=d_matrix,
+                compute_derivatives=compute_derivatives,
+                param_map=param_map,
+            )
+
         # accum_val: (n_points, n_peaks) starting as ones
         accum_val = np.ones((n_points, n_peaks), dtype=np.float64)
 
@@ -236,6 +252,124 @@ def _evaluate_single_dimension(
     )
 
     return result.values, result.derivatives, cluster_params.index_map
+
+
+def _evaluate_tilted_peaks(
+    peaks: Sequence[Peak],
+    params: Parameters,
+    grid_dims: list[np.ndarray],
+    *,
+    d_matrix: np.ndarray | None,
+    compute_derivatives: bool,
+    param_map: ParameterMap | None,
+) -> np.ndarray:
+    """Evaluate two-dimensional peaks after rotating their ppm offsets."""
+    if len(grid_dims) != _TILTED_DIMENSIONS:
+        msg = "Tilted peak evaluation requires exactly two spectral dimensions"
+        raise ValueError(msg)
+
+    shape_x = peaks[0].shapes[0]
+    shape_y = peaks[0].shapes[1]
+    cluster_params_x = shape_x.get_cluster_parameters(
+        peaks,
+        params,
+        param_map=param_map if compute_derivatives else None,
+    )
+    cluster_params_y = shape_y.get_cluster_parameters(
+        peaks,
+        params,
+        param_map=param_map if compute_derivatives else None,
+    )
+    offsets_x_hz, sign_x = shape_x.dim_ctx.compute_offsets(
+        grid_dims[0].ravel().astype(np.float64),
+        cluster_params_x.extras["cs"],
+    )
+    offsets_y_hz, sign_y = shape_y.dim_ctx.compute_offsets(
+        grid_dims[1].ravel().astype(np.float64),
+        cluster_params_y.extras["cs"],
+    )
+    obs_x_mhz = float(shape_x.dim_ctx.ppm2hz(1.0))
+    obs_y_mhz = float(shape_y.dim_ctx.ppm2hz(1.0))
+    tilt_degrees = np.array(
+        [params[peak.tilt_parameter_id.name].value if peak.tilted else 0.0 for peak in peaks],
+        dtype=np.float64,
+    )
+    rotated_x_hz, rotated_y_hz = rotate_ppm_offsets(
+        offsets_x_hz / obs_x_mhz,
+        offsets_y_hz / obs_y_mhz,
+        tilt_degrees=tilt_degrees,
+        obs_x_mhz=obs_x_mhz,
+        obs_y_mhz=obs_y_mhz,
+    )
+    result_x = shape_x.evaluate_offsets(
+        rotated_x_hz,
+        sign_x,
+        cluster_params_x,
+        compute_derivs=compute_derivatives,
+    )
+    result_y = shape_y.evaluate_offsets(
+        rotated_y_hz,
+        sign_y,
+        cluster_params_y,
+        compute_derivs=compute_derivatives,
+    )
+    values = result_x.values * result_y.values
+    if not compute_derivatives or d_matrix is None or param_map is None:
+        return values.T
+
+    _accumulate_tilted_profile_derivatives(
+        d_matrix,
+        result_x.derivatives,
+        result_y.values,
+        cluster_params_x.index_map,
+    )
+    _accumulate_tilted_profile_derivatives(
+        d_matrix,
+        result_y.derivatives,
+        result_x.values,
+        cluster_params_y.index_map,
+    )
+
+    derivative_x = result_x.derivatives["offset"] * result_y.values
+    derivative_y = result_y.derivatives["offset"] * result_x.values
+    theta = np.deg2rad(tilt_degrees)[None, :]
+    cos_theta = np.cos(theta)
+    sin_theta = np.sin(theta)
+    cs_x = derivative_x * (-obs_x_mhz * cos_theta) + derivative_y * (obs_y_mhz * sin_theta)
+    cs_y = derivative_x * (-obs_x_mhz * sin_theta) + derivative_y * (-obs_y_mhz * cos_theta)
+    _accumulate_derivatives(d_matrix, cluster_params_x.index_map["cs"], cs_x)
+    _accumulate_derivatives(d_matrix, cluster_params_y.index_map["cs"], cs_y)
+
+    u_ppm = rotated_x_hz / obs_x_mhz
+    v_ppm = rotated_y_hz / obs_y_mhz
+    tilt_derivative = (derivative_x * (obs_x_mhz * v_ppm) - derivative_y * (obs_y_mhz * u_ppm)) * (
+        np.pi / 180.0
+    )
+    tilt_indices = np.full(len(peaks), -1, dtype=np.intp)
+    for index, peak in enumerate(peaks):
+        if not peak.tilted:
+            continue
+        mapped_index = param_map.get(peak.tilt_parameter_id.name, -1)
+        tilt_indices[index] = -1 if mapped_index is None else mapped_index
+    _accumulate_derivatives(d_matrix, tilt_indices, tilt_derivative)
+    return values.T
+
+
+def _accumulate_tilted_profile_derivatives(
+    d_matrix: np.ndarray,
+    derivatives: dict[str, FloatArray],
+    other_dimension_values: FloatArray,
+    index_map: dict[str, IntArray],
+) -> None:
+    """Accumulate one profile's own parameters into the joint Jacobian."""
+    for parameter_name, indices in index_map.items():
+        if parameter_name == "cs" or parameter_name not in derivatives:
+            continue
+        _accumulate_derivatives(
+            d_matrix,
+            indices,
+            derivatives[parameter_name] * other_dimension_values,
+        )
 
 
 def _accumulate_derivatives(

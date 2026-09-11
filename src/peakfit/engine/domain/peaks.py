@@ -14,6 +14,8 @@ if TYPE_CHECKING:
     from peakfit.engine.types import Shape
     from peakfit.shared.typing import FloatArray, IntArray
 
+_TILTED_DIMENSIONS = 2
+
 
 @dataclass(slots=True)
 class Peak:
@@ -26,6 +28,7 @@ class Peak:
     name: str
     positions: FloatArray
     shapes: list[Shape]
+    tilted: bool = False
     positions_start: FloatArray = field(init=False)
 
     def __post_init__(self) -> None:
@@ -37,6 +40,9 @@ class Peak:
                 f"Peak '{self.name}': dimensionality mismatch - "
                 f"{len(self.positions)} positions but {len(self.shapes)} shapes"
             )
+            raise ValueError(msg)
+        if self.tilted and len(self.shapes) != _TILTED_DIMENSIONS:
+            msg = f"Peak '{self.name}': tilted geometry requires exactly two spectral dimensions"
             raise ValueError(msg)
 
         # Store initial positions
@@ -52,17 +58,35 @@ class Peak:
         params = Parameters()
         for shape in self.shapes:
             params.update(shape.create_params())
+        if self.tilted:
+            params.add(
+                self.tilt_parameter_id,
+                value=0.0,
+                min_value=-89.0,
+                max_value=89.0,
+                unit="deg",
+            )
         return params
+
+    @property
+    def tilt_parameter_id(self) -> ParameterId:
+        """Return the parameter identifier for this peak's joint tilt."""
+        axes = "-".join(shape.axis for shape in self.shapes)
+        return ParameterId(peak_name=self.name, axis=axes, label="tilt")
 
     def fix_params(self, params: Parameters) -> None:
         """Fix (set vary=False) all parameters for this peak's shapes."""
         for shape in self.shapes:
             shape.fix_params(params)
+        if self.tilted and self.tilt_parameter_id.name in params:
+            params[self.tilt_parameter_id.name].vary = False
 
     def release_params(self, params: Parameters) -> None:
         """Release (set vary=True) all parameters for this peak's shapes."""
         for shape in self.shapes:
             shape.release_params(params)
+        if self.tilted and self.tilt_parameter_id.name in params:
+            params[self.tilt_parameter_id.name].vary = True
 
     def print(self, params: Parameters) -> str:
         """Return textual representation of the peak parameters for output."""

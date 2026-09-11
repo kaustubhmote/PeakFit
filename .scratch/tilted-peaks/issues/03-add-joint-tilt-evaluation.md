@@ -1,7 +1,7 @@
 # Add joint tilt evaluation
 
 Type: task
-Status: ready-for-agent
+Status: resolved
 Blocked by: 02
 
 ## Objective
@@ -25,3 +25,7 @@ Optimization and analytical evaluation use one joint evaluator, and its
 Jacobian matches finite differences.
 
 ## Comments
+
+Implemented with one peak-owned axis-pair parameter and one vectorized joint
+path in `Cluster.evaluate_peaks`. Closed-form Gaussian, zero-angle parity, and
+finite-difference Jacobian tests cover all twelve profile choices.

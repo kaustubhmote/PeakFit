@@ -110,7 +110,11 @@ peakfit plot intensity "$LATEST_RUN" --output "$LATEST_RUN/intensity_profiles.pd
 peakfit plot cest "$LATEST_RUN" --output "$LATEST_RUN/cest_profiles.pdf"
 peakfit plot cpmg "$LATEST_RUN" --time-t2 0.04 --output "$LATEST_RUN/cpmg_profiles.pdf"
 peakfit plot spectrum --spectrum data/pseudo3d.ft2 --results "$LATEST_RUN"
+peakfit plot spectrum --spectrum /data/sample/10/pdata/1/2rr --results "$LATEST_RUN"
 ```
+
+The spectrum viewer accepts the same NMRPipe files and processed Bruker paths as
+`peakfit fit`.
 
 CEST and CPMG plots are generated from `tables/intensities.csv`. CEST preserves
 signed normalized intensities. CPMG computes `R2eff` from `log(I/I0)`, so only

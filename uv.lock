@@ -326,15 +326,11 @@ wheels = [
 
 [[package]]
 name = "nmrglue"
-version = "0.11"
-source = { registry = "https://pypi.org/simple" }
+version = "0.13.dev0"
+source = { git = "https://github.com/jjhelmus/nmrglue#fbac8a1dba039155875bdc6bac0678550f5146d3" }
 dependencies = [
     { name = "numpy" },
     { name = "scipy" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/77/82/2101ea5440d357641b234a092b53177974d84b507f9e69fc09e3e7997639/nmrglue-0.11.tar.gz", hash = "sha256:9e740a02d34ce5df9eb0390274c6a5f37b4837d59139512a3dd169106a8e3fe1", size = 205874, upload-time = "2024-10-29T21:07:20.314Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/cb/e4/79b679185d83a7b2513997203afd6c23359063d97738968f51d34e3ee9c8/nmrglue-0.11-py2.py3-none-any.whl", hash = "sha256:6e698b07cd71d12034664a3414ce0bb7bf5cd87cf750b03e33e439fb31dc13bd", size = 226135, upload-time = "2024-10-29T21:07:18.669Z" },
 ]
 
 [[package]]
@@ -441,7 +437,7 @@ requires-dist = [
     { name = "emcee", specifier = ">=3.1.6" },
     { name = "h5py", specifier = ">=3.15.1" },
     { name = "matplotlib", specifier = ">=3.10.8" },
-    { name = "nmrglue", specifier = ">=0.11" },
+    { name = "nmrglue", git = "https://github.com/jjhelmus/nmrglue" },
     { name = "numpy", specifier = ">=2.4.0" },
     { name = "pandas", specifier = ">=3.0.0" },
     { name = "pydantic", specifier = ">=2.5.0" },

@@ -25,3 +25,9 @@ def test_fit_help_describes_plane_values_without_renaming_the_option() -> None:
     assert "--z-values" in help_text
     assert "Plane values file" in help_text
     assert "Z-dimension" not in help_text
+
+
+def test_plot_spectrum_help_mentions_bruker_input() -> None:
+    help_text = rendered_help("plot", "spectrum")
+
+    assert "NMRPipe file or processed Bruker spectrum" in help_text

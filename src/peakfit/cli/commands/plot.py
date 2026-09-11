@@ -147,9 +147,9 @@ def plot_spectrum(
         typer.Option(
             "--spectrum",
             "-s",
-            help="NMR spectrum file",
+            help="NMRPipe file or processed Bruker spectrum",
             exists=True,
-            dir_okay=False,
+            dir_okay=True,
             resolve_path=True,
         ),
     ],
@@ -171,6 +171,7 @@ def plot_spectrum(
 
     Examples:
         peakfit plot spectrum -s data/spectrum.ft2
+        peakfit plot spectrum -s /data/sample/10/pdata/1/2rr
         peakfit plot spectrum -s data/spectrum.ft2 -r Fits/20240101_120000/
     """
     _configure_plot_ui(

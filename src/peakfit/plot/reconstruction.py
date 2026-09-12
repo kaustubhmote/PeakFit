@@ -125,6 +125,13 @@ class SpectraReconstructor:
         hz_per_pt: tuple[float, float],
     ) -> None:
         """Evaluate a single peak on the grid, optimizing for bounding box if possible."""
+        if peak.tilted:
+            full_grid = np.indices(grid_shape_2d)
+            grid_indices = [indices.ravel() for indices in full_grid]
+            values = Cluster.evaluate_peaks([peak], params, grid_indices)[0]
+            simulated += (current_amp * values).reshape(grid_shape_2d)
+            return
+
         y_hz_per_pt, x_hz_per_pt = hz_per_pt
         cutoff_factor = 4.0
 

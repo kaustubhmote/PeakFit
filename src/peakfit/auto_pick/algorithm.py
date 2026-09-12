@@ -966,7 +966,12 @@ def _create_peak(
     """Create a Peak object at a grid point."""
     positions = _point_to_ppm(point_indices, spectra)
     shapes = create_shapes(spectra, config.fitting, peak_name, positions, shape_names)
-    return Peak(name=peak_name, positions=np.array(positions, dtype=np.float64), shapes=shapes)
+    return Peak(
+        name=peak_name,
+        positions=np.array(positions, dtype=np.float64),
+        shapes=shapes,
+        tilted=config.fitting.tilted,
+    )
 
 
 def _fit_trial_state(

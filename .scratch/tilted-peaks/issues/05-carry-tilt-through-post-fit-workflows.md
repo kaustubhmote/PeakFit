@@ -1,7 +1,7 @@
 # Carry tilt through post-fit workflows
 
 Type: task
-Status: ready-for-agent
+Status: resolved
 Blocked by: 03, 04
 
 ## Objective
@@ -23,3 +23,8 @@ Saved results reconstruct the same tilted surface that the optimizer fitted,
 and post-fit workflows do not need a second model implementation.
 
 ## Comments
+
+Auto-picked peaks now retain the configured geometry. Tests cover fitting-state
+round trips, final JSON and CSV parameters, immutable full-grid simulation,
+MCMC sampling, and on-demand spectrum reconstruction. Tilted reconstruction
+uses the full grid so an axis-aligned crop cannot cut off diagonal tails.

@@ -1,23 +1,44 @@
 """Behavior tests for tilted two-dimensional lineshapes."""
 
+import csv
+import json
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pytest
 
+from peakfit.auto_pick.algorithm import _create_peak
+from peakfit.engine.algorithms.evaluation import classify_optimizer_result
+from peakfit.engine.algorithms.mcmc import estimate_uncertainties_mcmc
 from peakfit.engine.domain.cluster import Cluster
 from peakfit.engine.domain.config import FitConfig, PeakFitConfig
 from peakfit.engine.domain.constraints import ParameterConfig, PeakConstraints, apply_constraints
 from peakfit.engine.domain.param_map import ParameterMap
+from peakfit.engine.domain.params_vector import FitParameters
 from peakfit.engine.domain.peaks import Peak
 from peakfit.engine.domain.spectrum import Spectra, SpectralParameters
+from peakfit.engine.domain.state import FittingState
 from peakfit.engine.lineshapes.create import create_shapes
 from peakfit.engine.lineshapes.gaussian.kernel import kernel as gaussian_kernel
 from peakfit.engine.lineshapes.tilt import rotate_ppm_offsets
+from peakfit.engine.results import FitResult
 from peakfit.engine.types import ClusterParameters
 from peakfit.fit import fitting
+from peakfit.fit.final_outcome import finalize_fit
+from peakfit.fit.output_metadata import RunMetadata
+from peakfit.fit.pipeline import CorrectionSnapshot, PipelineCompletion
+from peakfit.fit.run_models import RunSummary
+from peakfit.fit.simulation import FinalModelSnapshot, simulate_final_outcome
 from peakfit.io.readers.peaks import read_sparky_list
+from peakfit.io.state import load_state, save_state
+from peakfit.io.writers.config import WriterConfig
+from peakfit.io.writers.orchestrator import write_fit_outputs
+from peakfit.plot.reconstruction import SpectraReconstructor
 from peakfit.shared.exceptions import DataIOError
+
+if TYPE_CHECKING:
+    from peakfit.engine.domain.params_scalar import Parameters
 
 REGISTERED_LINESHAPES = (
     "gaussian",
@@ -53,6 +74,18 @@ def test_peak_reader_marks_peaks_as_tilted(tmp_path: Path) -> None:
 
     assert len(peaks) == 1
     assert peaks[0].tilted is True
+
+
+def test_automatic_peak_creation_marks_peaks_as_tilted() -> None:
+    peak = _create_peak(
+        (4, 5),
+        make_2d_spectra(),
+        PeakFitConfig(fitting=FitConfig(tilted=True)),
+        ["gaussian", "gaussian"],
+        "ap1",
+    )
+
+    assert peak.tilted is True
 
 
 def test_per_peak_constraints_accept_a_tilt_axis_pair() -> None:
@@ -194,6 +227,36 @@ def make_2d_spectra(y_size: int = 9, x_size: int = 11) -> Spectra:
         z_values=np.array([0.0]),
         params=[pseudo, f2, f3],
     )
+
+
+def make_tilted_gaussian_model(
+    *,
+    tilt: float = 30.0,
+    linewidth: float = 25.0,
+) -> tuple[Spectra, Peak, Parameters, Cluster]:
+    spectra = make_2d_spectra()
+    positions = np.array([120.0, 8.0])
+    peak = Peak(
+        name="P1",
+        positions=positions,
+        shapes=create_shapes(
+            spectra,
+            FitConfig(),
+            "P1",
+            positions.tolist(),
+            ["gaussian", "gaussian"],
+        ),
+        tilted=True,
+    )
+    peak.set_cluster_id(1)
+    params = peak.create_params()
+    params["P1.F2-F3.tilt"].value = tilt
+    params["P1.F2.lw"].value = linewidth
+    params["P1.F3.lw"].value = linewidth
+    yy, xx = np.indices((9, 11))
+    grid_indices = [yy.ravel(), xx.ravel()]
+    cluster = Cluster(1, [peak], grid_indices, np.zeros((99, 1)))
+    return spectra, peak, params, cluster
 
 
 def test_rotate_ppm_offsets_converts_each_principal_axis_to_hz() -> None:
@@ -458,3 +521,115 @@ def test_tilted_cluster_analytic_derivatives_match_finite_differences(
             atol=1e-8,
             err_msg=name,
         )
+
+
+def test_spectrum_reconstruction_does_not_clip_a_tilted_peak(tmp_path: Path) -> None:
+    _spectra, peak, params, cluster = make_tilted_gaussian_model(
+        tilt=45.0,
+        linewidth=5.0,
+    )
+    state = FittingState(
+        clusters=[cluster],
+        params=FitParameters.from_parameters(params, [peak]),
+        scalar_params=params,
+        noise=1.0,
+    )
+    reconstructor = object.__new__(SpectraReconstructor)
+    reconstructor.results_dir = tmp_path
+    reconstructor._state = state
+    reconstructor._cluster_all = cluster
+    reconstructor._amplitudes = np.array([[2.0]])
+
+    reconstructed = reconstructor.reconstruct_plane(0, (9, 11))
+    expected = (2.0 * cluster.evaluate(params)[0]).reshape(9, 11)
+
+    np.testing.assert_allclose(reconstructed, expected)
+
+
+def test_tilt_survives_finalization_outputs_and_full_grid_simulation(tmp_path: Path) -> None:
+    spectra, peak, params, empty_cluster = make_tilted_gaussian_model(tilt=32.0)
+    basis = empty_cluster.evaluate(params)
+    amplitudes = np.array([[2.0]])
+    cluster = Cluster(
+        cluster_id=1,
+        peaks=[peak],
+        grid_indices=empty_cluster.grid_indices,
+        data=basis.T @ amplitudes,
+    )
+    result = FitResult(
+        cluster_id=1,
+        params=params.copy(deep=True),
+        residual=np.zeros(cluster.n_observations),
+        cost=0.0,
+        nfev=1,
+        njev=1,
+        success=True,
+        message="converged",
+        n_amplitude_params=1,
+        optimizer_kind="varpro",
+        correction_revision=0,
+        noise=1.0,
+    )
+    evaluation = classify_optimizer_result(cluster=cluster, result=result, noise=1.0)
+    state = FittingState(
+        clusters=[cluster],
+        params=FitParameters.from_parameters(params, [peak]),
+        scalar_params=params,
+        noise=1.0,
+    )
+    state_path = save_state(tmp_path / "metadata" / "fitting_state.pkl", state)
+    restored_state = load_state(state_path)
+    assert restored_state.peaks[0].tilted is True
+    assert "P1.F2-F3.tilt" in restored_state.scalar_params
+
+    correction_snapshot = CorrectionSnapshot.from_clusters([cluster], revision=0)
+    completion = PipelineCompletion(
+        state=state,
+        results=[result],
+        evaluations=[evaluation],
+        correction_snapshot=correction_snapshot,
+        n_optimizer_passes=1,
+    )
+    outcome = finalize_fit(completion)
+
+    tilt_names = {parameter.name for parameter in outcome.final_nonlinear_parameters}
+    assert "P1.F2-F3.tilt" in tilt_names
+
+    snapshot = FinalModelSnapshot.capture(outcome, state, correction_snapshot)
+    simulated = simulate_final_outcome(outcome, snapshot, spectra.data)
+    assert simulated is not None
+    np.testing.assert_allclose(simulated, cluster.data.T.reshape(1, 9, 11))
+
+    written = write_fit_outputs(
+        outcome,
+        tmp_path,
+        WriterConfig(formats=("json", "csv")),
+        metadata=RunMetadata(),
+        z_values=spectra.z_values,
+        summary=RunSummary.from_outcome(outcome),
+    )
+    payload = json.loads(written["summary_fit"].read_text())
+    json_names = {parameter["name"] for parameter in payload["final_nonlinear_parameters"]}
+    assert "P1.F2-F3.tilt" in json_names
+    with written["parameters"].open(newline="") as handle:
+        csv_names = {row["parameter_name"] for row in csv.DictReader(handle)}
+    assert "P1.F2-F3.tilt" in csv_names
+
+
+def test_mcmc_samples_tilt_as_a_nonlinear_parameter() -> None:
+    _spectra, _peak, params, cluster = make_tilted_gaussian_model(tilt=20.0)
+    for parameter in params.values():
+        parameter.vary = parameter.name == "P1.F2-F3.tilt"
+
+    result = estimate_uncertainties_mcmc(
+        params,
+        cluster,
+        noise=1.0,
+        n_walkers=4,
+        n_steps=4,
+        burn_in=0,
+        workers=1,
+    )
+
+    assert result.n_lineshape_params == 1
+    assert result.parameter_names[0] == "P1.F2-F3.tilt"

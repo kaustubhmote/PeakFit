@@ -65,6 +65,7 @@ Useful fit options:
 
 - `--config peakfit.toml` for reproducible settings.
 - `--lineshape auto|gaussian|lorentzian|pvoigt|sp1|sp2|no_apod`.
+- `--tilted` to fit a rotated peak in a two-dimensional spectral plane.
 - `--optimizer varpro|basin_hopping`.
 - `--refine N` for exactly `N` optimizer passes; corrections update only between
   passes. Existing commands that relied on the former `N + 1` pass behavior
@@ -77,6 +78,49 @@ Generate a starter config:
 ```bash
 peakfit init peakfit.toml
 ```
+
+### Fit tilted two-dimensional peaks
+
+Use `--tilted` with any existing lineshape:
+
+```bash
+peakfit fit /data/sample/10/pdata/1/2rr peaks.list \
+  --lineshape pvoigt \
+  --tilted
+```
+
+The equivalent configuration is:
+
+```toml
+[fitting]
+lineshape = "pvoigt"
+tilted = true
+```
+
+Tilt is independent of the one-dimensional profile. It works with `gaussian`,
+`lorentzian`, `pvoigt`, `sp1`, `sp2`, and `no_apod`, including each
+`_doublet` variant. `--lineshape auto --tilted` also works.
+
+Each peak gets a fitted `<peak>.F2-F3.tilt` parameter in degrees. The angle is
+measured counterclockwise in the F2-F3 ppm plane. You can constrain it with the
+normal parameter rules:
+
+```toml
+[parameters.defaults]
+"*.*.tilt" = { min = -60.0, max = 60.0 }
+
+[parameters.peaks."G45N-HN"]
+"F2-F3.tilt" = { value = 35.0 }
+```
+
+Tilted fitting requires exactly two spectral dimensions. The angle is poorly
+determined for a nearly circular peak or a heavily overlapped peak. Compare an
+axis-aligned run and a tilted run with the reported AIC or BIC before accepting
+the extra parameter.
+
+SP1, SP2, and no-apodization tilt the complete processed profile. Treat these
+as phenomenological models. The `_doublet` variants rotate the complete
+doublet surface, including its splitting pattern.
 
 ## Inputs
 

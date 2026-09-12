@@ -5,8 +5,8 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from peakfit.engine.domain.coordinates import rotate_ppm_offsets
 from peakfit.engine.domain.peaks import Peak
-from peakfit.engine.lineshapes.tilt import rotate_ppm_offsets
 from peakfit.shared.typing import FloatArray, IntArray
 
 if TYPE_CHECKING:

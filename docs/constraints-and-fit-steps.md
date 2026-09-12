@@ -187,6 +187,7 @@ update only between consecutive passes, including across step boundaries.
 
 [fitting]
 lineshape = "auto"
+tilted = false
 refine_iterations = 1  # One optimizer pass; ignored when steps are defined
 
 # Multi-step fit
@@ -224,6 +225,7 @@ F3 = 0.05  # ¹H: ±0.05 ppm
 [parameters.defaults]
 "*.*.lw" = { min = 5.0, max = 100.0 }
 "*.*.eta" = { min = 0.0, max = 1.0 }
+"*.*.tilt" = { min = -60.0, max = 60.0 }
 
 # Per-peak constraints
 [parameters.peaks."2N-H"]
@@ -232,6 +234,7 @@ position_window = 0.02  # Very tight for this peak
 
 [parameters.peaks."G45N-HN"]
 "F3.lw" = { value = 20.0, min = 15.0, max = 30.0 }
+"F2-F3.tilt" = { value = 35.0 }
 
 [parameters.peaks."W50N-HE1".position_windows]
 F2 = 1.0   # Large movement allowed

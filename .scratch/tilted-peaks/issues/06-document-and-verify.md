@@ -1,7 +1,7 @@
 # Document and verify tilted fitting
 
 Type: task
-Status: ready-for-agent
+Status: resolved
 Blocked by: 05
 
 ## Objective
@@ -26,3 +26,7 @@ The documented command works, all acceptance criteria in the spec have tests,
 and the repository checks pass.
 
 ## Comments
+
+The README now documents the CLI, TOML, parameter constraints, supported
+profiles, angle convention, and interpretation limits. Synthetic VarPro tests
+recover known tilt for Gaussian, pseudo-Voigt, and no-apodization profiles.

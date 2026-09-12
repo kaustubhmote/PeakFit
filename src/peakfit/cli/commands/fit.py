@@ -176,6 +176,7 @@ def fit_command(
         peakfit fit /data/sample/10/pdata/1 peaks.list
         peakfit fit spectrum.ft2 peaks.list -z z_values.txt -o results/
         peakfit fit spectrum.ft2 peaks.list --config settings.toml
+        peakfit fit spectrum.ft2 peaks.list --lineshape pvoigt --tilted
     """
     start_time = datetime.datetime.now(datetime.UTC)
     set_verbosity(Verbosity.VERBOSE if verbose else Verbosity.NORMAL)

@@ -11,9 +11,11 @@ import pytest
 from peakfit.auto_pick.algorithm import _create_peak
 from peakfit.engine.algorithms.evaluation import classify_optimizer_result
 from peakfit.engine.algorithms.mcmc import estimate_uncertainties_mcmc
+from peakfit.engine.algorithms.varpro import fit_cluster
 from peakfit.engine.domain.cluster import Cluster
 from peakfit.engine.domain.config import FitConfig, PeakFitConfig
 from peakfit.engine.domain.constraints import ParameterConfig, PeakConstraints, apply_constraints
+from peakfit.engine.domain.coordinates import rotate_ppm_offsets
 from peakfit.engine.domain.param_map import ParameterMap
 from peakfit.engine.domain.params_vector import FitParameters
 from peakfit.engine.domain.peaks import Peak
@@ -21,7 +23,6 @@ from peakfit.engine.domain.spectrum import Spectra, SpectralParameters
 from peakfit.engine.domain.state import FittingState
 from peakfit.engine.lineshapes.create import create_shapes
 from peakfit.engine.lineshapes.gaussian.kernel import kernel as gaussian_kernel
-from peakfit.engine.lineshapes.tilt import rotate_ppm_offsets
 from peakfit.engine.results import FitResult
 from peakfit.engine.types import ClusterParameters
 from peakfit.fit import fitting
@@ -633,3 +634,47 @@ def test_mcmc_samples_tilt_as_a_nonlinear_parameter() -> None:
 
     assert result.n_lineshape_params == 1
     assert result.parameter_names[0] == "P1.F2-F3.tilt"
+
+
+@pytest.mark.parametrize("lineshape", ["gaussian", "pvoigt", "no_apod"])
+def test_varpro_recovers_tilt_from_synthetic_peak(lineshape: str) -> None:
+    spectra = make_2d_spectra()
+    positions = np.array([120.0, 8.0])
+    peak = Peak(
+        name="P1",
+        positions=positions,
+        shapes=create_shapes(
+            spectra,
+            FitConfig(),
+            "P1",
+            positions.tolist(),
+            [lineshape, lineshape],
+        ),
+        tilted=True,
+    )
+    peak.set_cluster_id(1)
+    true_params = peak.create_params()
+    true_params["P1.F2-F3.tilt"].value = 28.0
+    true_params["P1.F2.lw"].value = 12.0
+    true_params["P1.F3.lw"].value = 30.0
+    yy, xx = np.indices((7, 9))
+    yy += 1
+    xx += 1
+    grid_indices = [yy.ravel(), xx.ravel()]
+    empty_cluster = Cluster(1, [peak], grid_indices, np.zeros((63, 1)))
+    data = empty_cluster.evaluate(true_params).T @ np.array([[100.0]])
+    cluster = Cluster(1, [peak], grid_indices, data)
+    fit_params = true_params.copy(deep=True)
+    for parameter in fit_params.values():
+        parameter.vary = parameter.name == "P1.F2-F3.tilt"
+    fit_params["P1.F2-F3.tilt"].value = 10.0
+
+    result = fit_cluster(
+        fit_params,
+        cluster,
+        noise=1.0,
+        max_nfev=200,
+    )
+
+    assert result.success
+    assert result.params["P1.F2-F3.tilt"].value == pytest.approx(28.0, abs=0.02)

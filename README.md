@@ -82,7 +82,7 @@ and missing or non-finite coordinates produce errors.
 Useful fit options:
 
 - `--config peakfit.toml` for reproducible settings.
-- `--lineshape auto|gaussian|lorentzian|pvoigt|sp1|sp2|no_apod`.
+- `--lineshape auto|gaussian|lorentzian|pvoigt|sp1|sp2|no_apod|dqfcosy`.
 - `--tilted` to fit a rotated peak in a two-dimensional spectral plane.
 - `--optimizer varpro|basin_hopping`.
 - `--refine N` for exactly `N` optimizer passes; corrections update only between
@@ -99,7 +99,7 @@ peakfit init peakfit.toml
 
 ### Fit tilted two-dimensional peaks
 
-Use `--tilted` with any existing lineshape:
+Use `--tilted` with the singlet or in-phase doublet lineshapes:
 
 ```bash
 peakfit fit /data/sample/10/pdata/1/2rr peaks.list \
@@ -155,6 +155,10 @@ needs `--time-t2`.
 For Bruker spectra, `--lineshape auto` uses `no_apod` when `WDW=0` and the
 robust `pvoigt` model for other window functions. Select an explicit lineshape
 when you need a processing-specific model.
+
+For four-lobe HN-Hα cross-peaks, select `--lineshape dqfcosy` and mark the
+multiplet centers. The [DQF-COSY guide](docs/dqfcosy.md) describes the per-axis
+window variables, shared J result, and limits of coupling extraction.
 
 ## Outputs
 

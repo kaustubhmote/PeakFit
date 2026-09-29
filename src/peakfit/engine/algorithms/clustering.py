@@ -110,6 +110,16 @@ def segment_data(
         pos = peak.positions_i
         pos_tup = tuple(int(x) for x in pos) if isinstance(pos, np.ndarray) else pos
         data_around_peaks[pos_tup] = True
+        # Antiphase multiplet centers lie on a node. Include the complete fitting
+        # rectangle so disconnected positive/negative lobes remain one peak.
+        shapes = getattr(peak, "shapes", [])
+        if shapes and all(shape.shape_name == "dqfcosy" for shape in shapes):
+            axes = []
+            for shape, size in zip(shapes, data_above_threshold.shape, strict=True):
+                grid = np.arange(size, dtype=np.float64)
+                offsets, _ = shape.dim_ctx.compute_offsets(grid, np.array([shape.center]))
+                axes.append(np.flatnonzero(np.abs(offsets[:, 0]) <= shape.region_radius_hz))
+            data_around_peaks[np.ix_(*axes)] = True
 
     # 3. Dilate Peak Mask
     connectivity = data.ndim - 1

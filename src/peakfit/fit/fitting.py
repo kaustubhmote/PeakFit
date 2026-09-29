@@ -78,6 +78,13 @@ def load_data(
     """
     # 1. Load Spectra
     spectra = read_spectra(spectrum_path, z_values_path, config.exclude_planes)
+    if config.fitting.lineshape == "dqfcosy":
+        if spectra.n_spectral_dims != _TILTED_SPECTRAL_DIMENSIONS or config.fitting.tilted:
+            raise DataIOError("DQF-COSY requires two spectral dimensions and tilted=false.")
+        if peaklist_path is None:
+            raise DataIOError(
+                "DQF-COSY requires a peak list marking the centers of the four lobes."
+            )
     if config.fitting.tilted and spectra.n_spectral_dims != _TILTED_SPECTRAL_DIMENSIONS:
         raise DataIOError(
             "Tilted fitting requires exactly two spectral dimensions; "

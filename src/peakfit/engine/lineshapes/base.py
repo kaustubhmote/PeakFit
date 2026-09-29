@@ -124,6 +124,10 @@ class ShapeBase:
             )
         return pid.name
 
+    def parameter_name(self, label: str) -> str:
+        """Resolve the stored name, including joint-axis and cluster parameters."""
+        return self._param_name_for_spec(label, self)
+
     def get_cluster_parameters(
         self,
         peaks: Any,

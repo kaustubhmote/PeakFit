@@ -22,6 +22,7 @@ LineshapeName = Literal[
     "lorentzian_doublet",
     "pvoigt",
     "pvoigt_doublet",
+    "dqfcosy",
     "sp1",
     "sp1_doublet",
     "sp2",
@@ -30,6 +31,21 @@ LineshapeName = Literal[
     "no_apod_doublet",
 ]
 OutputFormat = Literal["csv", "json", "txt"]
+
+
+class DQFCOSYWindow(BaseModel):
+    """Fixed time-domain processing inputs for one DQF-COSY axis."""
+
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False, frozen=True)
+
+    acquisition_time: float = Field(gt=0, description="Retained complex points / sweep width, s.")
+    points: int = Field(
+        ge=2, description="Retained complex time-domain points, before zero filling."
+    )
+    sine_power: Literal[0, 1, 2] = 0
+    sine_offset: float = Field(default=0.0, ge=0, le=1, description="Sine start, in units of pi.")
+    sine_end: float = Field(default=1.0, ge=0, le=1, description="Sine end, in units of pi.")
+    lb_hz: float = Field(default=0.0, ge=0, description="Applied exponential broadening, Hz.")
 
 
 class FitConfig(BaseModel):
@@ -77,6 +93,16 @@ class FitConfig(BaseModel):
     tilted: bool = Field(
         default=False,
         description="Fit rotated peaks in a two-dimensional spectral plane.",
+    )
+    dqfcosy_windows: dict[str, DQFCOSYWindow] = Field(
+        default_factory=dict,
+        description="Fixed processing inputs per axis; overrides NMRPipe header detection.",
+    )
+    dqfcosy_region_hz: float = Field(
+        default=40.0,
+        gt=0,
+        allow_inf_nan=False,
+        description="DQF-COSY fitting rectangle half-width in Hz, around each marked center.",
     )
     refine_iterations: Annotated[int, Field(le=20)] = Field(
         default=1,
@@ -333,6 +359,7 @@ __all__ = [
     "AutoPeakConfig",
     "BasinHoppingConfig",
     "ClusterConfig",
+    "DQFCOSYWindow",
     "FitConfig",
     "FitStep",
     "LineshapeName",

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from peakfit.engine.lineshapes.dqfcosy import DQFCOSY
 from peakfit.engine.lineshapes.gaussian.model import Gaussian, GaussianDoublet
 from peakfit.engine.lineshapes.lorentzian.model import Lorentzian, LorentzianDoublet
 from peakfit.engine.lineshapes.no_apod.model import NoApod, NoApodDoublet
@@ -20,6 +21,7 @@ if TYPE_CHECKING:
 
 
 SHAPES: dict[str, Callable[..., Shape]] = {
+    "dqfcosy": DQFCOSY,
     "gaussian": Gaussian,
     "gaussian_doublet": GaussianDoublet,
     "lorentzian": Lorentzian,
@@ -65,6 +67,8 @@ def create_shapes(
     if len(positions) != len(shape_names):
         msg = "Number of positions and shape names must match"
         raise ValueError(msg)
+    if "dqfcosy" in shape_names and (list(shape_names) != ["dqfcosy", "dqfcosy"]):
+        raise ValueError("DQF-COSY must be used on both axes of a two-dimensional spectrum.")
 
     shapes: list[Shape] = []
     for dim, (center, shape_name) in enumerate(zip(positions, shape_names, strict=False), start=1):

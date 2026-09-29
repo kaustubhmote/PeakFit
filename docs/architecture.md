@@ -34,6 +34,10 @@ fit orchestration, uncertainty analysis, plotting, and output generation.
    One-dimensional lineshape profiles evaluate supplied frequency offsets.
    `Cluster.evaluate_peaks` owns multidimensional peak geometry, including the
    optional F2-F3 rotation and its analytic derivatives.
+   DQF-COSY profiles share one `F2-F3.j` parameter and have separate intrinsic
+   widths and fixed processing windows. Their fitting rectangles include the
+   marked zero-signal midpoint and all four lobes. Rotation and automatic peak
+   picking are unavailable for this model. See [`dqfcosy.md`](dqfcosy.md).
 4. `fit.final_outcome` freezes completed scientific truth by run-local
    `cluster_id` against the terminal correction revision, while
    `fit.output_metadata` captures non-scientific run metadata; `io` reads inputs

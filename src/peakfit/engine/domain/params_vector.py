@@ -177,6 +177,11 @@ class FitParameters(BaseModel):
                         axis=axis,
                         label=spec.name,
                     ).name
+                    # Built-in shapes resolve joint-axis J and cluster phase names.
+                    # Minimal reconstructed shapes retain the axis-local fallback.
+                    resolve_name = getattr(shape, "parameter_name", None)
+                    if resolve_name is not None:
+                        p_name = resolve_name(spec.name)
                     extras[spec.name].append((p_name, spec.default))
 
         return FitParametersIndex(

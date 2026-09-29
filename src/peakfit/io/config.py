@@ -84,7 +84,7 @@ def generate_default_config() -> str:
 # Generated automatically - edit as needed
 
 [fitting]
-lineshape = "auto"  # auto, gaussian, lorentzian, pvoigt, sp1, sp2, no_apod
+lineshape = "auto"  # auto, gaussian, lorentzian, pvoigt, sp1, sp2, no_apod, dqfcosy
 tilted = false
 refine_iterations = 1
 fix_positions = false

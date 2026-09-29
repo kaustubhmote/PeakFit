@@ -55,8 +55,8 @@ def fit_command(
         Path | None,
         typer.Argument(
             help=(
-                "Peak list file (.list, .csv, .json, .xlsx, .xls). Omitting it uses "
-                "experimental automatic peak picking."
+                "Peak list file (.list, .csv, .json, .xlsx, .xls, .xml). If omitted, "
+                "use peaklist.xml beside the Bruker data, or experimental automatic peak picking."
             ),
             exists=True,
             dir_okay=False,
@@ -182,14 +182,22 @@ def fit_command(
     set_verbosity(Verbosity.VERBOSE if verbose else Verbosity.NORMAL)
     reporter = ConsoleReporter()
 
+    try:
+        spectrum = resolve_spectrum_path(spectrum)
+    except (OSError, ValueError) as exc:
+        error(f"Failed to read spectrum: {exc}")
+        raise typer.Exit(1) from exc
+    if peaklist is None and spectrum.is_dir():
+        candidate = spectrum / "peaklist.xml"
+        if candidate.is_file():
+            peaklist = candidate
+
     validation = validate_inputs(spectrum, peaklist)
     if validation.errors:
         error("Validation failed. Fix the errors below before fitting.")
         for e in validation.errors:
             bullet(str(e), style="error")
         raise typer.Exit(1)
-
-    spectrum = resolve_spectrum_path(spectrum)
 
     fit_config = build_fit_config(
         config=config,

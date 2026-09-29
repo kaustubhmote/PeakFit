@@ -1,6 +1,8 @@
 """Peak list readers that build Peak domain objects."""
 
+import math
 from typing import TYPE_CHECKING
+from xml.etree import ElementTree as ET
 
 import numpy as np
 import pandas as pd
@@ -17,6 +19,52 @@ if TYPE_CHECKING:
     from peakfit.engine.domain.spectrum import Spectra
 
 _CCPN_ASSIGNMENT_PARTS = 4
+_BRUKER_PEAK_DIMENSIONS = 2
+
+
+def read_bruker_peak_rows(path: Path) -> list[tuple[str, list[float]]]:
+    """Read all TopSpin PeakList2D groups in file order, with F1 then F2 in ppm."""
+    try:
+        root = ET.parse(path).getroot()
+    except ET.ParseError as exc:
+        raise ValueError(f"Invalid Bruker peak list XML in {format_path(path)}: {exc}") from exc
+    if root.tag != "PeakList":
+        raise ValueError(f"Expected Bruker PeakList root in {format_path(path)}")
+
+    rows = []
+    for index, peak in enumerate(root.findall("./PeakList2D/Peak2D"), start=1):
+        positions = []
+        for axis in ("F1", "F2"):
+            value = peak.get(axis)
+            try:
+                position = float(value) if value is not None else float("nan")
+                if not math.isfinite(position):
+                    raise ValueError("Position must be finite")
+            except ValueError as exc:
+                raise ValueError(
+                    f"Invalid {axis} position for Bruker peak {index} in "
+                    f"{format_path(path)}: {value!r}; expected a finite ppm value"
+                ) from exc
+            positions.append(position)
+        rows.append((f"peak{index}", positions))
+    if not rows:
+        raise ValueError(f"No Peak2D entries found in Bruker peak list {format_path(path)}")
+    return rows
+
+
+def read_bruker_list(
+    path: Path, spectra: Spectra, shape_names: list[str], config: FitConfig
+) -> list[Peak]:
+    """Read a TopSpin 2D XML peak list for a spectrum with two spectral axes."""
+    if spectra.n_spectral_dims != _BRUKER_PEAK_DIMENSIONS:
+        raise ValueError("Bruker PeakList2D XML requires exactly two spectral dimensions")
+    rows = read_bruker_peak_rows(path)
+    return _create_peak_list_from_rows(
+        ((name, *(str(p) for p in positions)) for name, positions in rows),
+        spectra,
+        shape_names,
+        config,
+    )
 
 
 def _get_position_column_names(n_spectral_dims: int) -> list[str]:
@@ -237,6 +285,8 @@ def read_list(
 ) -> list[Peak]:
     """Read a list of peaks from a file based on its extension."""
     extension = path.suffix.lower().lstrip(".")
+    if extension == "xml":
+        return read_bruker_list(path, spectra, shape_names, config)
     if extension == "list":
         return read_sparky_list(path, spectra, shape_names, config)
     if extension == "csv":

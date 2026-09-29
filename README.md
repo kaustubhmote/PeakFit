@@ -57,9 +57,27 @@ and no `pdata/1`, select the required `pdata/<procno>` directory. PeakFit reads
 processed `1r`, `2rr`, `3rrr`, and `4rrrr` data; it does not process raw Bruker
 `fid` or `ser` data.
 
-`peakfit fit` validates inputs before fitting. Omitting the peak list invokes the
-experimental automatic peak-picking workflow; provide a peak list for routine
-analyses.
+TopSpin's 2D `peaklist.xml` can replace the CSV or Sparky peak list:
+
+```bash
+peakfit fit /data/sample/10/pdata/1/2rr /data/sample/10/pdata/1/peaklist.xml
+peakfit fit /data/sample/10/pdata/1/2rr
+```
+
+When you omit the peak list, PeakFit looks for `peaklist.xml` in the selected
+Bruker processing folder. An explicit peak list always takes precedence.
+If no list is found, PeakFit uses experimental automatic peak picking.
+This changes omitted-list commands for Bruker folders that contain `peaklist.xml`.
+To use automatic picking in those folders, move or rename the XML file first.
+
+The XML reader combines all `PeakList2D` groups in file order and names peaks
+`peak1`, `peak2`, and so on. It reads `F1` as indirect-axis ppm and `F2` as
+direct-axis ppm. Both positive and negative peaks are included; XML intensities
+and picking types are ignored because amplitudes are fitted from the spectrum.
+XML input requires exactly two spectral dimensions. Empty lists, malformed XML,
+and missing or non-finite coordinates produce errors.
+
+`peakfit fit` validates inputs before fitting. CSV and Sparky workflows are unchanged.
 
 Useful fit options:
 

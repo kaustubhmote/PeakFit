@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 
+from peakfit.io.readers.peaks import read_bruker_peak_rows
 from peakfit.io.readers.spectrum import read_spectra
 
 if TYPE_CHECKING:
@@ -74,6 +75,8 @@ def _load_peak_rows(peaklist_path: Path) -> list[PeakRow]:
     """Load enough peak-list data to validate the file."""
     suffix = peaklist_path.suffix.lower()
 
+    if suffix == ".xml":
+        return read_bruker_peak_rows(peaklist_path)
     if suffix == ".list":
         return _read_sparky_list(peaklist_path)
     if suffix == ".csv":

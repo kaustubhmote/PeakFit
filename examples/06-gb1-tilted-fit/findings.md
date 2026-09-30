@@ -139,3 +139,111 @@ is corrected acquisition timing when acquisition and extracted sweep widths
 differ. Existing fits with duration-dependent profiles should be rerun for
 such spectra. Generated results remain outside Git, and the source data were
 not modified.
+
+## Handling an ambiguous origin of tilt
+
+Tilt is an observed shape feature. It does not identify a continuous distribution,
+two molecular states, accidental resonance overlap, or a common field contribution.
+A processing-aware model remains necessary, but it must accommodate more than
+one interpretation of the intrinsic signal.
+
+Primary experiments support several mechanisms, with important scope limits:
+
+| Mechanism | Published evidence | Relevant limit |
+| --- | --- | --- |
+| Static conformational heterogeneity | [Su and Hong, 2011](https://pmc.ncbi.nlm.nih.gov/articles/PMC3222302/) compare apparent and echo-derived widths and examine correlated C-C profiles. | Membrane-peptide carbon spectra support the method, not a specific origin for GB1 H-N tilt. |
+| Common local-field or susceptibility broadening | [Kervern et al., 2006](https://feh.scs.illinois.edu/doc/papers/1201228224_320.pdf) observe common unit slopes on ppm axes in a paramagnetic solid. [Hanrahan et al., 2017](https://pubmed.ncbi.nlm.nih.gov/29022618/) demonstrate ABMS reduction in diamagnetic organic solids. | The common-field geometry is informative. Neither experiment establishes the magnitude of susceptibility broadening in this GB1 sample. |
+| Drift during acquisition | [Wang et al., 2025](https://pmc.ncbi.nlm.nih.gov/articles/PMC12285714/) show that field stabilization removes protein 2D peak asymmetry at 1.1 GHz. | This demonstrates an artifact mechanism in a GHz-class magnet, not evidence of substantial drift at 700 MHz. |
+
+### What the current fits suggest
+
+All 34 clusters containing one listed peak have positive cross covariance in
+the Gaussian-tilt comparison. Their median descriptive correlation coefficient
+is 0.381, with an interquartile range of 0.339 to 0.407. This calculation converts
+the two fitted Gaussian widths to ppm standard deviations and rotates their
+diagonal covariance into the original axes. These are properties of fitted
+processed Gaussians, not intrinsic chemical-shift distributions. A single
+listed peak also need not be a single resonance.
+
+The repeated sign makes a common contribution worth testing before attributing
+every tilted peak to a different pair of conformers. It is compatible with
+several causes, including a shared field distribution, temperature variation,
+and processing or model bias. It does not exclude molecular heterogeneity.
+
+For a Gaussian approximation, a common fractional field offset gives
+
+```text
+C = diag(v_N, v_H) + s_B^2 [[1, 1], [1, 1]]
+```
+
+The shared offset has the same value on both ppm axes. Unequal independent
+nitrogen and proton widths mean the combined ellipse need not have a 45-degree
+principal axis. Its angle may vary by peak. Cross covariance is therefore a
+better quantity to compare across peaks than the fitted rotation alone.
+The existing pseudo-Voigt parameters do not define a finite-variance probability
+distribution, so this covariance argument cannot be applied directly to their
+Lorentzian tails or negative mixing parameters.
+
+Two unresolved components also contribute correlation. With finite within-
+component covariances C1 and C2, separation vector d, and weights p and 1-p,
+
+```text
+C_mixture = p C1 + (1-p) C2 + p(1-p) d d^T
+```
+
+The last term can make two axis-aligned peaks look tilted. A synthetic
+illustration is saved as `results/origin-ambiguity.png`. Its two models share
+the same center and covariance, although their higher-order shapes differ.
+It is an illustration of ambiguity, not an alternative fit to this dataset.
+
+### A proposed fitting and validation sequence
+
+1. Reprocess the original acquisition without linear prediction and with mild,
+   documented windows. Keep the sharpened spectrum for display, but compare
+   profiles against the conservatively processed data or complex raw acquisition.
+   Ideal separable windows preserve separability for an isolated separable peak.
+   They can change existing tilt, overlap, and noise, but do not by themselves
+   demonstrate intrinsic nitrogen-proton correlation.
+2. Compare a single correlated shift distribution with a restricted two-component
+   model through the same acquisition and processing calculation. The single
+   model can combine a positive-definite Gaussian shift covariance with
+   independent homogeneous profiles. The two-component model represents a
+   competing descriptive hypothesis, not automatically two conformers.
+3. First test a sample-wide common-field covariance against site-specific
+   covariance on strong, nominally isolated peaks. Include referencing and
+   phase corrections at the spectrum level. Share a broadening contribution
+   only when independent spectra support it. Temperature variation can have
+   residue-specific shift sensitivities even when the thermal perturbation is shared.
+4. Accept an extra component only when its center, separation, and signal
+   contribution remain stable across sensible processing choices, starting
+   values, and independent spectra. Use a third assigned dimension to separate
+   accidental residue overlap. Near-zero amplitudes and coincident centers make
+   mixture-model testing nonregular, so an ordinary F-test or a naive BIC cutoff
+   is insufficient. A parametric bootstrap should simulate acquired noise and
+   reproduce processing. Independent replicate prediction is more persuasive
+   than improvement on correlated Fourier pixels.
+5. Where decomposition is unstable, report one unresolved signal group and its
+   calibrated total signal, with uncertainty across acceptable models. Keep
+   individual components provisional. For comparisons across a series, fit the
+   spectra jointly with justified shared centers and profile parameters, while
+   allowing per-spectrum referencing and amplitude changes. Peak heights are
+   sensitive to width and shape, so prefer a consistently normalized signal
+   measure when widths change.
+
+Agreement across different processing choices tests robustness, but those
+versions share the same acquisition and are not independent biological evidence.
+An effective component weight is also not a conformer population without
+assignment, transfer-efficiency, and relaxation controls. hNH signal depends
+on preparation and transfer as well as abundance.
+
+The most useful additional measurements are independent short full 2D replicates,
+an interleaved field reference or changed indirect-increment order, transverse
+echo decays, and calibrated temperature or MAS series. An echo can establish
+refocusable broadening without distinguishing field inhomogeneity from a static
+chemical-shift distribution. A carefully controlled susceptibility or packing
+perturbation tests a field contribution more directly, provided it preserves
+hydration and sample state. Sequential halves of the indirect increments do not
+form two comparable full-spectrum replicates.
+
+This is a proposed analysis protocol. No origin-specific model or additional
+peak decomposition has been fitted or implemented in this follow-up.

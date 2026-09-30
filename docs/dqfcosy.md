@@ -9,12 +9,19 @@ coupling magnitude shared by both axes. J fitting is automatic for this model.
 uv run peakfit fit spectrum.ft2 centers.list --config dqfcosy.toml
 ```
 
-A processed Bruker `pdata/<procno>` directory also works. Supply explicit windows
-for Bruker data. PeakFit does not translate Bruker WDW, SSB, or GB into this model.
+A processed Bruker `pdata/<procno>` directory also works. Without window overrides,
+PeakFit uses the acquisition and processing dictionaries loaded by nmrglue:
+`acqu2s` and `proc2s` for the indirect axis, `acqus` and `procs` for the direct axis.
+For supported Bruker processing, no configuration file is required:
+
+```bash
+uv run peakfit fit experiment/pdata/1 centers.list --lineshape dqfcosy
+```
+
 Automatic picking is unavailable for `dqfcosy` because the picker finds individual
 lobes rather than multiplet centers. Existing models and defaults are unchanged.
 
-## Set the processing variables
+## Override the detected processing variables
 
 The following settings are examples. Replace them with the actual acquisition and
 processing values for each axis. PeakFit labels the two spectral dimensions `F2`
@@ -47,7 +54,7 @@ filling. `acquisition_time` is that count divided by the acquisition sweep width
 in Hz. The final sample occurs one dwell time before `acquisition_time`.
 Neither variable is the processed spectrum size. For extracted frequency regions,
 use the original acquisition sweep width to compute this time.
-If the header's Fourier-transform size differs from the current axis size,
+For NMRPipe data, if the header's Fourier-transform size differs from the current axis size,
 PeakFit requires an explicit window override to avoid deriving acquisition timing
 from the cropped sweep width.
 
@@ -73,6 +80,28 @@ Unsupported windows fail with an error instead of falling back to a pseudo-Voigt
 Gaussian transformations, negative exponential broadening, partial or inverse
 windows, linear prediction, magnitude processing, and nonuniform sampling are
 outside this model.
+
+For Bruker data, automatic detection supports `WDW=0` with no window, `WDW=1`
+with exponential broadening from `LB`, `WDW=3` with SINE, and `WDW=4` with QSINE.
+For SINE and QSINE, `SSB >= 2` gives a start angle of `π/SSB`; smaller nonnegative
+values give an unshifted sine. Saved `LB` values do not apply to SINE or QSINE.
+
+Timing comes from acquisition `TD` and `SW_h`, or `SW * SFO1`. `AQ_mod` identifies
+the direct real/imaginary pairs. `FnMODE`, falling back to `MC2` when undefined,
+identifies indirect quadrature. States, States-TPPI, and Echo-Antiecho use paired
+samples. TPPI uses real samples at half the complex dwell interval. `TDeff` and
+the Fourier-transform size limit the retained record; zero filling does not
+increase its duration. Cropped processing sweep widths do not affect this timing.
+
+The Bruker sine is defined over the acquisition interval. PeakFit translates its
+angle at the last retained sample into `sine_end`, including when the time record
+is truncated. The [TopSpin processing reference](https://nmr.chem.ucsb.edu/docs/Bruker_NMR_Manuals/processing-reference_v007.pdf)
+defines these window and retention parameters in sections 2.4 and 3.27.
+
+An explicit window block replaces detection for that axis only. Missing acquisition
+metadata, unsupported `WDW`, linear prediction through `ME_mod`, or time-domain
+shifts through `TDoff` produce an actionable DQF-COSY error. They do not prevent
+loading the spectrum for other peak models.
 
 Increase `dqfcosy_region_hz` until the rectangle includes all lobes and enough
 surrounding signal to distinguish width from splitting. This is a half-width

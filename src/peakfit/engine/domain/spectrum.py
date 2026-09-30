@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any, overload
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from peakfit.engine.domain.config import DQFCOSYWindow
 from peakfit.engine.domain.coordinates import DimensionContext
 from peakfit.shared.typing import FloatArray
 
@@ -67,6 +68,8 @@ class SpectralParameters(BaseModel):
     nucleus: str | None = None  # Nucleus label: "1H", "15N", etc.
     td_size: int | None = None  # Acquisition-domain points (from header TDSIZE)
     ft_size: int | None = None  # Frequency-domain processed points (from header FTSIZE)
+    dqfcosy_window: DQFCOSYWindow | None = None
+    dqfcosy_window_error: str | None = None
     delta: float = Field(default=0.0, init=False)
     first: float = Field(default=0.0, init=False)
 

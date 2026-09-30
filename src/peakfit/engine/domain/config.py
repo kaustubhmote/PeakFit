@@ -96,7 +96,7 @@ class FitConfig(BaseModel):
     )
     dqfcosy_windows: dict[str, DQFCOSYWindow] = Field(
         default_factory=dict,
-        description="Fixed processing inputs per axis; overrides NMRPipe header detection.",
+        description="Fixed processing inputs per axis; overrides NMRPipe or Bruker headers.",
     )
     dqfcosy_region_hz: float = Field(
         default=40.0,

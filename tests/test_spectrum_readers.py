@@ -5,8 +5,10 @@ from typing import TYPE_CHECKING
 import numpy as np
 import pytest
 
-from peakfit.engine.domain.config import FitConfig
+from peakfit.engine.domain.config import DQFCOSYWindow, FitConfig
 from peakfit.engine.domain.spectrum import get_shape_names
+from peakfit.engine.lineshapes.create import create_shapes
+from peakfit.engine.lineshapes.dqfcosy import DQFCOSY, antiphase_profile
 from peakfit.io.readers import spectrum as spectrum_reader
 
 if TYPE_CHECKING:
@@ -98,3 +100,127 @@ def test_bruker_nontransformed_first_axis_is_the_pseudo_dimension(
     assert spectra.pseudo_dim_added is False
     assert spectra.z_values.tolist() == [0, 1, 2, 3, 4]
     assert spectra.n_spectral_dims == 2
+
+
+@pytest.mark.parametrize(("wdw", "power"), [(0, 0), (1, 0), (3, 1), (4, 2)])
+@pytest.mark.parametrize(("ssb", "offset"), [(0, 0), (1, 0), (1.5, 0), (2, 0.5), (4, 0.25)])
+def test_bruker_window_matches_independent_topspin_fid(wdw, power, ssb, offset):
+    acquisition = {"TD": 128, "SW_h": 1000.0, "AQ_mod": 3}
+    processing = {"WDW": wdw, "SSB": ssb, "LB": 1.5, "SI": 256}
+    window = spectrum_reader._bruker_dqfcosy_window(acquisition, processing, direct=True)
+    assert window.points == 64
+    assert window.acquisition_time == pytest.approx(0.064)
+    assert window.sine_power == power
+    # LB belongs to EM; inactive saved LB/SSB must not modify another window.
+    times = np.arange(64) / 1000
+    weights = np.exp(-np.pi * (6.0 + (1.5 if wdw == 1 else 0)) * times)
+    if power:
+        weights *= np.sin(np.pi * (offset + (1 - offset) * times / 0.064)) ** power
+    offsets = np.linspace(-30, 30, 151)
+    fid = 2j * np.sin(np.pi * 4.2 * times) * weights
+    expected = np.exp(-2j * np.pi * np.outer(offsets, times)) @ fid / 64
+    actual = antiphase_profile(offsets, np.array(6.0), np.array(4.2), window)[0]
+    np.testing.assert_allclose(actual, expected, atol=2e-13)
+
+
+@pytest.mark.parametrize(("fnmode", "mc2"), [(4, 0), (5, 0), (6, 0), (0, 3), (0, 4), (0, 5)])
+def test_bruker_indirect_timing_uses_quadrature_and_acquisition_width(fnmode, mc2):
+    # Acquisition width is independent of the cropped processing width.
+    acquisition = {"TD": 512, "FnMODE": fnmode, "SW": 10.0, "SFO1": 600.0}
+    processing = {"WDW": 4, "SSB": 2, "SI": 1024, "TDeff": 256, "SW_p": 1500, "MC2": mc2}
+    window = spectrum_reader._bruker_dqfcosy_window(acquisition, processing, direct=False)
+    assert window.points == 128
+    assert window.acquisition_time == pytest.approx(128 / 6000)
+    assert window.sine_offset == 0.5
+    assert window.sine_end == pytest.approx(0.5 + 0.5 * 127 / 256)
+
+
+def test_bruker_tppi_retains_real_samples_at_half_dwell():
+    acquisition = {"TD": 256, "FnMODE": 3, "SW_h": 4000}
+    window = spectrum_reader._bruker_dqfcosy_window(
+        acquisition, {"WDW": 3, "SSB": 0, "SI": 512}, direct=False
+    )
+    assert window.points == 256
+    assert window.acquisition_time == pytest.approx(256 / 8000)
+
+
+def test_bruker_si_can_truncate_but_zero_filling_does_not_extend_timing():
+    acquisition = {"TD": 2048, "AQ_mod": 3, "SW_h": 8000, "AQ": 100.0}
+    truncated = spectrum_reader._bruker_dqfcosy_window(
+        acquisition, {"WDW": 0, "SI": 256}, direct=True
+    )
+    zero_filled = spectrum_reader._bruker_dqfcosy_window(
+        acquisition, {"WDW": 0, "SI": 8192, "TDeff": 0}, direct=True
+    )
+    assert truncated.points == 256
+    assert truncated.acquisition_time == pytest.approx(256 / 8000)
+    assert zero_filled.points == 1024
+    assert zero_filled.acquisition_time == pytest.approx(1024 / 8000)
+
+
+def test_nmrglue_bruker_dictionaries_supply_both_windows_without_config(tmp_path):
+    experiment = tmp_path / "cosy"
+    processed = _make_bruker_directory(experiment / "pdata" / "1")
+    acquisition = {"TD": 2048, "SW_h": 8000.0, "SFO1": 600.004, "AQ_mod": 3, "NUC1": "<1H>"}
+    indirect = {"TD": 512, "SW": 10.0, "SFO1": 600.0, "FnMODE": 5, "NUC1": "<1H>"}
+    procs = {
+        "SI": 32,
+        "FTSIZE": 32,
+        "XDIM": 32,
+        "SF": 600.0,
+        "WDW": 4,
+        "SSB": 2.0,
+        "TDeff": 64,
+        "FT_mod": 6,
+        "NC_proc": 0,
+        "BYTORDP": 0,
+        "DTYPP": 0,
+    }
+    proc2s = {**procs, "WDW": 3, "SSB": 4.0, "MC2": 4}
+    for path, parameters in [
+        (experiment / "acqus", acquisition),
+        (experiment / "acqu2s", indirect),
+        (processed / "procs", procs),
+        (processed / "proc2s", proc2s),
+    ]:
+        spectrum_reader.bruker.write_jcamp(
+            {"_comments": [], "_coreheader": [], **parameters}, str(path), overwrite=True
+        )
+    (processed / "2rr").write_bytes(np.zeros((32, 32), dtype="<i4").tobytes())
+    spectra = spectrum_reader.read_spectra(processed)
+    config = FitConfig(lineshape="dqfcosy")
+    shapes = create_shapes(spectra, config, "A23", [8.0, 4.5], get_shape_names(config, spectra))
+    assert all(key in spectra.dic for key in ("acqus", "acqu2s", "procs", "proc2s"))
+    assert isinstance(shapes[0], DQFCOSY)
+    assert isinstance(shapes[1], DQFCOSY)
+    assert shapes[0].window.sine_power == 1
+    assert shapes[0].window.sine_offset == 0.25
+    assert shapes[0].window.acquisition_time == pytest.approx(32 / 6000)
+    assert shapes[1].window.sine_power == 2
+    assert shapes[1].window.acquisition_time == pytest.approx(32 / 8000)
+    override = DQFCOSYWindow(acquisition_time=0.1, points=200, lb_hz=2)
+    config.dqfcosy_windows = {"F2": override}
+    overridden = create_shapes(spectra, config, "A23", [8.0, 4.5], ["dqfcosy", "dqfcosy"])
+    assert isinstance(overridden[0], DQFCOSY)
+    assert isinstance(overridden[1], DQFCOSY)
+    assert overridden[0].window == override
+    assert overridden[1].window == shapes[1].window
+
+
+@pytest.mark.parametrize(
+    ("change", "reason"),
+    [
+        ({"WDW": 2}, "WDW"),
+        ({"WDW": 1, "LB": -1}, "lb_hz"),
+        ({"TDoff": 2}, "TDoff"),
+        ({"ME_mod": 1}, "ME_mod"),
+        ({"TDeff": 3}, "complete real/imaginary pairs"),
+    ],
+)
+def test_unsupported_bruker_processing_has_actionable_error(change, reason):
+    with pytest.raises(ValueError, match=reason):
+        spectrum_reader._bruker_dqfcosy_window(
+            {"TD": 512, "SW_h": 8000, "AQ_mod": 3},
+            {"WDW": 4, "SSB": 2, "SI": 256, **change},
+            direct=True,
+        )

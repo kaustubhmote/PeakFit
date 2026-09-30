@@ -20,6 +20,7 @@ from peakfit.engine.lineshapes.dqfcosy import DQFCOSY, antiphase_profile, window
 from peakfit.fit import fitting
 from peakfit.fit.output_metadata import RunMetadata
 from peakfit.fit.simulation import simulate_final_outcome
+from peakfit.io.readers import spectrum as spectrum_reader
 from peakfit.io.state import load_state, save_state
 from peakfit.io.writers.config import WriterConfig
 from peakfit.io.writers.orchestrator import write_fit_outputs
@@ -289,3 +290,53 @@ def test_full_pipeline_exports_and_restores_shared_j(tmp_path, monkeypatch):
     reconstructed = simulate_final_outcome(run.outcome, run.simulation_snapshot, spectra.data)
     assert reconstructed is not None
     np.testing.assert_allclose(reconstructed, spectra.data, atol=1e-6)
+
+
+def test_bruker_header_defaults_recover_j_without_window_configuration(tmp_path, monkeypatch):
+    # Acquisition widths differ from the cropped displayed axes. Both are zero filled.
+    source = make_spectra()
+    dictionaries = {
+        "acqu2s": {"TD": 256, "SW_h": 1600.0, "FnMODE": 5},
+        "acqus": {"TD": 1024, "SW_h": 2048.0, "AQ_mod": 3},
+        "proc2s": {"WDW": 3, "SSB": 3, "LB": 100.0, "FT_mod": 5, "FTSIZE": 8192, "SI": 8192},
+        "procs": {"WDW": 4, "SSB": 0, "FT_mod": 6, "FTSIZE": 4096, "SI": 4096},
+    }
+    profiles = []
+    centers = [8.001, 4.498]
+    for spec, center, width, sw, points, power, offset in zip(
+        source.spectral_params,
+        centers,
+        [6, 5],
+        [1600, 2048],
+        [128, 512],
+        [1, 2],
+        [1 / 3, 0],
+        strict=True,
+    ):
+        t = np.arange(points) / sw
+        window = np.sin(np.pi * (offset + (1 - offset) * t / (points / sw))) ** power
+        fid = 2j * np.sin(np.pi * 4.2 * t) * np.exp(-np.pi * width * t) * window
+        offsets = spec.pts2hz(np.arange(spec.size)) - center * spec.obs
+        profiles.append((np.exp(-2j * np.pi * np.outer(offsets, t)) @ fid / points).real)
+    data = np.outer(*profiles)
+    data /= np.max(np.abs(data))
+    data += np.random.default_rng(18).normal(0, 0.001, data.shape)
+    udic = {
+        i: {"size": spec.size, "sw": spec.sw, "obs": spec.obs, "car": spec.car, "label": "1H"}
+        for i, spec in enumerate(source.spectral_params)
+    }
+    processed = tmp_path / "pdata" / "1"
+    processed.mkdir(parents=True)
+    (processed / "procs").touch()
+    (processed / "2rr").touch()
+    peak_list = tmp_path / "centers.list"
+    peak_list.write_text("A23 8.0 4.5\n")
+    monkeypatch.setattr(spectrum_reader.bruker, "read_pdata", lambda _path: (dictionaries, data))
+    monkeypatch.setattr(spectrum_reader.bruker, "guess_udic", lambda *_args, **_kwargs: udic)
+    config = PeakFitConfig(fitting=FitConfig(lineshape="dqfcosy"), noise_level=0.001)
+    loaded = fitting.load_data(processed, peak_list, None, config)
+    run = fitting.run_fit(loaded, config, tmp_path / "results", workers=1)
+    assert run.success
+    j = next(p for p in run.outcome.final_nonlinear_parameters if p.name == "A23.F2-F3.j")
+    assert j.value == pytest.approx(4.2, abs=0.08)
+    assert j.unit == "Hz"

@@ -165,11 +165,15 @@ class DQFCOSY(SimpleSingletBase):
         window = config.dqfcosy_windows.get(self.axis)
         if window is None:
             if spectra.dic.get("_peakfit_format") == "bruker":
-                raise ValueError(
-                    f"DQF-COSY: set fitting.dqfcosy_windows.{self.axis} for Bruker input. "
-                    "Use retained complex points and the actual processing window."
-                )
-            window = _header_window(self._grid.spec_params)
+                window = self._grid.spec_params.dqfcosy_window
+                if window is None:
+                    detail = self._grid.spec_params.dqfcosy_window_error or "missing parameters"
+                    raise ValueError(
+                        f"DQF-COSY: cannot infer {self.axis} window from Bruker input: {detail}. "
+                        f"Set fitting.dqfcosy_windows.{self.axis} to override the header."
+                    )
+            else:
+                window = _header_window(self._grid.spec_params)
         self.window: DQFCOSYWindow = window
         self.region_radius_hz = config.dqfcosy_region_hz
 

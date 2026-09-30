@@ -7,6 +7,7 @@ import numpy as np
 from nmrglue.fileio import bruker, pipe
 from numpy.typing import NDArray
 
+from peakfit.engine.domain.config import DQFCOSYWindow
 from peakfit.engine.domain.param_id import PSEUDO_AXIS
 from peakfit.engine.domain.spectrum import Spectra, SpectralParameters, get_dimension_label
 
@@ -29,6 +30,14 @@ NUCLEUS_LABELS: dict[str, str] = {
     "31": "31P",
 }
 BRUKER_BINARY_NAMES = frozenset({"1r", "2rr", "3rrr", "4rrrr"})
+_BRUKER_EM = 1
+_BRUKER_SINE = 3
+_BRUKER_QSINE = 4
+_BRUKER_TPPI = 3
+_BRUKER_COMPLEX_MODES = {4, 5, 6}  # States, States-TPPI, Echo-Antiecho.
+_BRUKER_COMPLEX_TRANSFORMS = {5, 6}
+_MIN_SINE_SHIFT = 2.0
+_MIN_TIME_POINTS = 2
 
 
 def _positive_int(value: Any) -> int | None:
@@ -200,6 +209,100 @@ def _bruker_aq_time(
     return points / sw
 
 
+def _bruker_number(parameters: dict[str, Any], name: str) -> float:
+    value = _float_value(parameters.get(name), float("nan"))
+    if not np.isfinite(value):
+        raise ValueError(f"missing or invalid {name}")
+    return value
+
+
+def _bruker_time_sampling(
+    acquisition: dict[str, Any], processing: dict[str, Any], *, direct: bool
+) -> tuple[int, float, int]:
+    """Return retained samples, dwell seconds, and acquired samples before zero filling."""
+    # guess_udic(strip_fake=True) deliberately changes SW for extracted spectra.
+    # Always derive timing from the acquisition dictionary instead.
+    sw = _float_value(acquisition.get("SW_h")) or (
+        _float_value(acquisition.get("SW")) * _float_value(acquisition.get("SFO1"))
+    )
+    if not np.isfinite(sw) or sw <= 0:
+        raise ValueError("missing or invalid acquisition SW_h or SW and SFO1")
+    td = _bruker_number(acquisition, "TD")
+    if td <= 0 or not td.is_integer():
+        raise ValueError("TD must be a positive integer")
+
+    if direct:
+        # Simultaneous QSIM/DQD acquisition stores interleaved real/imaginary points.
+        mode = _bruker_number(acquisition, "AQ_mod")
+        if mode not in {1, 3}:
+            raise ValueError("DQF-COSY requires complex QSIM or DQD direct acquisition")
+        paired = True
+    else:
+        mode = _float_value(acquisition.get("FnMODE"))
+        if mode == 0 and "MC2" in processing:
+            mode = _bruker_number(processing, "MC2") + 1
+        if mode == 0 and processing.get("FT_mod") in _BRUKER_COMPLEX_TRANSFORMS:
+            mode = 4  # The status transform establishes complex quadrature pairing.
+        if mode not in _BRUKER_COMPLEX_MODES and mode != _BRUKER_TPPI:
+            raise ValueError("unsupported or missing indirect FnMODE/MC2 for phase-sensitive data")
+        paired = mode in _BRUKER_COMPLEX_MODES
+
+    raw_points = int(td)
+    tdeff = _float_value(processing.get("TDeff"))
+    if not np.isfinite(tdeff) or tdeff < 0 or not tdeff.is_integer():
+        raise ValueError("TDeff must be a nonnegative integer")
+    retained = min(raw_points, int(tdeff)) if tdeff > 0 else raw_points
+    transform_size = _positive_int(processing.get("FTSIZE") or processing.get("SI"))
+    if transform_size is not None:
+        retained = min(retained, 2 * transform_size)
+    divisor = 2 if paired else 1
+    if raw_points % divisor or retained % divisor:
+        raise ValueError("TD and TDeff must contain complete real/imaginary pairs")
+    samples = retained // divisor
+    if samples < _MIN_TIME_POINTS:
+        raise ValueError("fewer than two retained time-domain samples")
+    # TPPI acquires real samples at half the complex dwell interval.
+    dwell = 1 / sw if paired else 1 / (2 * sw)
+    return samples, dwell, raw_points // divisor
+
+
+def _bruker_dqfcosy_window(
+    acquisition: dict[str, Any], processing: dict[str, Any], *, direct: bool
+) -> DQFCOSYWindow:
+    """Translate supported TopSpin status parameters to the sampled fitting window."""
+    if _float_value(processing.get("ME_mod")) != 0:
+        raise ValueError("linear prediction (ME_mod) is outside the DQF-COSY model")
+    if _float_value(processing.get("TDoff")) != 0:
+        raise ValueError("time-domain shifts (TDoff) are outside the DQF-COSY model")
+    points, dwell, acquired_points = _bruker_time_sampling(acquisition, processing, direct=direct)
+    code = _bruker_number(processing, "WDW")
+    if code not in {0, _BRUKER_EM, _BRUKER_SINE, _BRUKER_QSINE}:
+        raise ValueError(f"unsupported Bruker window WDW={code:g}")
+    power = 0
+    offset = 0.0
+    end = 1.0
+    lb = 0.0
+    if code == _BRUKER_EM:
+        lb = _bruker_number(processing, "LB")
+    elif code in {_BRUKER_SINE, _BRUKER_QSINE}:
+        shift = _bruker_number(processing, "SSB")
+        if shift < 0:
+            raise ValueError("SSB must be nonnegative")
+        offset = 1 / shift if shift >= _MIN_SINE_SHIFT else 0.0
+        power = 1 if code == _BRUKER_SINE else 2
+        # TopSpin defines sin(phi + (pi-phi)*t/AQ). Convert the angle at
+        # the final retained sample to our explicit endpoint convention.
+        end = offset + (1 - offset) * (points - 1) / acquired_points
+    return DQFCOSYWindow(
+        acquisition_time=points * dwell,
+        points=points,
+        sine_power=power,
+        sine_offset=offset,
+        sine_end=end,
+        lb_hz=lb,
+    )
+
+
 def _read_bruker_spectral_parameters(
     dic: dict[str, Any], data: NDArray[Any], udic: dict[Any, Any], first_is_pseudo: bool
 ) -> list[SpectralParameters]:
@@ -218,6 +321,14 @@ def _read_bruker_spectral_parameters(
         car = _float_value(universal_axis.get("car"))
         window_code = round(_float_value(processing.get("WDW")))
         nucleus = str(universal_axis.get("label") or "").strip("<> ") or None
+        window = None
+        window_error = None
+        try:
+            window = _bruker_dqfcosy_window(acquisition, processing, direct=direct)
+        except ValueError as error:
+            # Generic spectrum loading also supports windows outside the DQF model.
+            # Defer the actionable error until that model is actually requested.
+            window_error = str(error)
 
         params.append(
             SpectralParameters(
@@ -239,6 +350,8 @@ def _read_bruker_spectral_parameters(
                 nucleus=nucleus,
                 td_size=_positive_int(acquisition.get("TD")),
                 ft_size=_positive_int(processing.get("FTSIZE") or processing.get("SI")),
+                dqfcosy_window=window,
+                dqfcosy_window_error=window_error,
             )
         )
 

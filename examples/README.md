@@ -25,6 +25,7 @@ and intensity plots. Use the other examples only when you need that specific tas
 | `03-global-optimization/` | Optional optimizer comparison for difficult fits | Ready |
 | `04-uncertainty-analysis/` | Optional post-fit MCMC analysis from saved results | Ready |
 | `05-constraints-and-fit-steps/` | Optional constraint-driven and multi-step fits | Ready |
+| `06-gb1-tilted-fit/` | Tilted processed-Bruker profile comparison with residual plots | External data required |
 
 ## Common Output Layout
 

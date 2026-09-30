@@ -28,6 +28,10 @@ fit orchestration, uncertainty analysis, plotting, and output generation.
 1. `cli` parses user intent and builds configuration. For Bruker input without an
    explicit peak list, it discovers `peaklist.xml` in the resolved processing folder
    before validation. The XML parser in `io` supplies both validation and fitting.
+   Generic Bruker acquisition duration uses the acquisition sweep width, even
+   when the frequency coordinates describe an extracted spectrum. Other Bruker
+   windows currently fall back to empirical pseudo-Voigt profiles; this does
+   not supply an exact Gaussian-multiplication or linear-prediction model.
 2. `fit` validates inputs, loads spectra/peaks, prepares clusters, and runs direct fit pipeline functions.
    When no peak list is provided or discovered, `fit` delegates to the experimental `auto_pick` package instead of owning that logic.
 3. `engine` performs numerical work: clustering, lineshapes, optimizers, residuals, and statistics helpers.

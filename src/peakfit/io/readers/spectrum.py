@@ -198,16 +198,28 @@ def _float_value(value: Any, default: float = 0.0) -> float:
 def _bruker_aq_time(
     acquisition: dict[str, Any], axis: dict[str, Any], sw: float, *, direct: bool
 ) -> float:
+    """Derive acquisition duration without using a cropped frequency-domain width."""
+    acquisition_sw = _bruker_acquisition_width(acquisition)
     if direct:
         acquisition_time = _float_value(acquisition.get("AQ"))
         if acquisition_time > 0.0:
             return acquisition_time
 
     td_size = _positive_int(acquisition.get("TD"))
+    if np.isfinite(acquisition_sw) and acquisition_sw > 0.0:
+        sw = acquisition_sw
     if td_size is None or sw <= 0.0:
         return 1.0
     points = td_size / 2.0 if bool(axis.get("complex", True)) else float(td_size)
     return points / sw
+
+
+def _bruker_acquisition_width(acquisition: dict[str, Any]) -> float:
+    """Read the acquisition sweep width in Hz, before spectral extraction."""
+    sw = _float_value(acquisition.get("SW_h"))
+    if np.isfinite(sw) and sw > 0.0:
+        return sw
+    return _float_value(acquisition.get("SW")) * _float_value(acquisition.get("SFO1"))
 
 
 def _bruker_number(parameters: dict[str, Any], name: str) -> float:
@@ -223,9 +235,7 @@ def _bruker_time_sampling(
     """Return retained samples, dwell seconds, and acquired samples before zero filling."""
     # guess_udic(strip_fake=True) deliberately changes SW for extracted spectra.
     # Always derive timing from the acquisition dictionary instead.
-    sw = _float_value(acquisition.get("SW_h")) or (
-        _float_value(acquisition.get("SW")) * _float_value(acquisition.get("SFO1"))
-    )
+    sw = _bruker_acquisition_width(acquisition)
     if not np.isfinite(sw) or sw <= 0:
         raise ValueError("missing or invalid acquisition SW_h or SW and SFO1")
     td = _bruker_number(acquisition, "TD")

@@ -243,3 +243,44 @@ def test_unsupported_bruker_processing_has_actionable_error(change, reason):
             {"WDW": 4, "SSB": 2, "SI": 256, **change},
             direct=True,
         )
+
+
+@pytest.mark.parametrize(
+    "acquisition",
+    [
+        {"TD": 3988, "SW_h": 100000.0},
+        {"TD": 3988, "SW": 100000.0 / 700.23, "SFO1": 700.23},
+    ],
+)
+def test_bruker_cropped_spectrum_preserves_acquisition_time(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, acquisition: dict
+) -> None:
+    processed = _make_bruker_directory(tmp_path / "experiment" / "pdata" / "1")
+    data = np.zeros((16, 256), dtype=np.float32)
+    dic = {
+        "proc2s": {"FT_mod": 5, "WDW": 2},
+        "procs": {"FT_mod": 6, "WDW": 2},
+        "acqu2s": {"TD": 144, "SW_h": 1800.0},
+        "acqus": acquisition,
+    }
+    udic = {
+        0: {"size": 16, "sw": 900.0, "obs": 70.95, "car": 8283.56, "label": "15N"},
+        1: {"size": 256, "sw": 3125.0, "obs": 700.23, "car": 5907.79, "label": "1H"},
+    }
+    monkeypatch.setattr(spectrum_reader.bruker, "read_pdata", lambda _path: (dic, data))
+    monkeypatch.setattr(spectrum_reader.bruker, "guess_udic", lambda *_args, **_kwargs: udic)
+    spectra = spectrum_reader.read_spectra(processed)
+
+    assert spectra.params[1].aq_time == pytest.approx(72 / 1800)
+    assert spectra.params[2].aq_time == pytest.approx(1994 / 100000)
+    # Frequency coordinates still use the extracted width.
+    assert spectra.params[2].delta == pytest.approx(-3125 / (256 * 700.23))
+
+
+def test_bruker_explicit_acquisition_time_and_missing_metadata_fallback():
+    explicit = spectrum_reader._bruker_aq_time(
+        {"TD": 3988, "SW_h": 100000, "AQ": 0.025}, {}, 3125, direct=True
+    )
+    fallback = spectrum_reader._bruker_aq_time({"TD": 3988}, {}, 3125, direct=True)
+    assert explicit == pytest.approx(0.025)
+    assert fallback == pytest.approx(1994 / 3125)

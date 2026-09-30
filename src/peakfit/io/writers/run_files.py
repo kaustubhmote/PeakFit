@@ -31,6 +31,15 @@ def write_simulated_spectra(
     if reporter:
         reporter.action("Writing simulated spectra...")
 
+    if spectra.quadrature_components:
+        # Keep the component identity and all fitted planes in one lossless artifact.
+        output_path = output_dir / "simulated_quadrature.npz"
+        np.savez_compressed(
+            output_path,
+            **dict(zip(spectra.quadrature_components, data_simulated, strict=True)),
+        )
+        return output_path
+
     if spectra.pseudo_dim_added:
         data_simulated = np.squeeze(data_simulated, axis=0)
 

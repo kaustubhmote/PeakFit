@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from peakfit.engine.algorithms.common import calculate_shape_heights
-from peakfit.engine.domain.cluster import Cluster
+from peakfit.engine.domain.cluster import Cluster, expand_quadrature_grid
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -43,8 +43,16 @@ def simulate_data(params: Parameters, clusters: Sequence[Cluster], data: FloatAr
     # Full-grid coordinate vectors: one coordinate per point (flattened)
     grid_indices = np.indices(grid_shape)
     positions = [idx.ravel() for idx in grid_indices]
+    component_indices = None
+    if cluster_all.quadrature_components:
+        if n_series != len(cluster_all.quadrature_components):
+            raise ValueError("Simulated plane count must match the quadrature components.")
+        positions, component_indices = expand_quadrature_grid(
+            positions, cluster_all.quadrature_components
+        )
+        n_series = 1
 
-    shapes_full = cluster_all.evaluate(params, positions)  # (n_peaks, n_points)
+    shapes_full = cluster_all.evaluate(params, positions, component_indices=component_indices)
 
     if amplitudes.shape[1] != n_series:
         raise ValueError(
@@ -54,6 +62,8 @@ def simulate_data(params: Parameters, clusters: Sequence[Cluster], data: FloatAr
 
     # Model: (n_points, n_peaks) @ (n_peaks, n_series) -> (n_points, n_series)
     model = shapes_full.T @ amplitudes
+    if cluster_all.quadrature_components:
+        return model.reshape(data.shape).astype(float)
 
     # Return shape matches input (series, *grid)
     if n_series == 1:

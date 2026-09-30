@@ -2,6 +2,7 @@
 
 import csv
 import json
+import pickle
 from pathlib import Path
 
 import numpy as np
@@ -15,6 +16,7 @@ from peakfit.engine.domain.param_map import ParameterMap
 from peakfit.engine.domain.params_vector import FitParameters
 from peakfit.engine.domain.peaks import Peak
 from peakfit.engine.domain.spectrum import Spectra, SpectralParameters, get_shape_names
+from peakfit.engine.domain.state import FittingState
 from peakfit.engine.lineshapes.create import create_shapes
 from peakfit.engine.lineshapes.dqfcosy import DQFCOSY, antiphase_profile, windowed_resonance
 from peakfit.fit import fitting
@@ -340,3 +342,161 @@ def test_bruker_header_defaults_recover_j_without_window_configuration(tmp_path,
     j = next(p for p in run.outcome.final_nonlinear_parameters if p.name == "A23.F2-F3.j")
     assert j.value == pytest.approx(4.2, abs=0.08)
     assert j.unit == "Hz"
+
+
+def quadrature_example(components, *, noise=0.0, phases=(3.0, -5.0)):
+    """Build each component independently from sampled complex time signals."""
+    spectra = make_spectra()
+    windows = {
+        "F2": DQFCOSYWindow(acquisition_time=0.046, points=192, sine_power=1),
+        "F3": DQFCOSYWindow(acquisition_time=0.30, points=512, sine_power=2, sine_offset=0.2),
+    }
+    config = FitConfig(
+        lineshape="dqfcosy",
+        use_imaginary=True,
+        dqfcosy_windows=windows,
+        fit_phase=["F2", "F3"],
+        dqfcosy_region_hz=28,
+    )
+    profiles = [
+        direct_transform(
+            spec.pts2hz(np.arange(spec.size)) - center * spec.obs, width, 4.2, windows[spec.label]
+        )
+        * np.exp(1j * np.deg2rad(phase))
+        for spec, center, width, phase in zip(
+            spectra.spectral_params, [8.0, 4.5], [12.0, 6.0], phases, strict=True
+        )
+    ]
+    planes = np.stack(
+        [
+            np.outer(
+                -profiles[0].imag if code[1] == "i" else profiles[0].real,
+                -profiles[1].imag if code[0] == "i" else profiles[1].real,
+            )
+            for code in components
+        ]
+    )
+    planes /= np.max(np.abs(planes))
+    planes += np.random.default_rng(34).normal(0, noise, planes.shape)
+    spectra = Spectra(
+        dic=spectra.dic,
+        params=spectra.params,
+        data=planes,
+        z_values=np.arange(len(components), dtype=float),
+        quadrature_components=components,
+    )
+    return spectra, config
+
+
+@pytest.mark.parametrize("components", [("rr", "ri"), ("rr", "ir", "ii"), ("rr", "ri", "ir", "ii")])
+def test_joint_quadrature_recovers_j_width_and_phase(components):
+    spectra, config = quadrature_example(components, noise=0.002)
+    peak = make_peak(spectra, config)
+    cluster = create_clusters(spectra, [peak], contour_level=2)[0]
+    assert cluster.n_series == 1
+    assert cluster.n_observations % len(components) == 0
+    result = fit_cluster(peak.create_params(), cluster, noise=0.002, max_nfev=200)
+    assert result.success
+    assert result.params["A23.F2-F3.j"].value == pytest.approx(4.2, abs=0.08)
+    assert result.params["A23.F2.lw"].value == pytest.approx(12.0, abs=0.15)
+    assert result.params["A23.F3.lw"].value == pytest.approx(6.0, abs=0.1)
+    for shape, expected in zip(peak.shapes, [3.0, -5.0], strict=True):
+        assert result.params[shape.parameter_name("phase")].value == pytest.approx(
+            expected, abs=0.15
+        )
+    assert [name for name in result.params if name.endswith(".j")] == ["A23.F2-F3.j"]
+
+
+def test_joint_quadrature_jacobian_includes_both_shared_j_derivatives():
+    spectra, config = quadrature_example(("rr", "ri", "ir", "ii"))
+    peak = make_peak(spectra, config)
+    cluster = create_clusters(spectra, [peak], contour_level=2)[0]
+    params = peak.create_params()
+    names = params.get_vary_names()
+    jacobian = np.zeros((len(names), cluster.n_points))
+    cluster.evaluate(params, d_matrix=jacobian, param_map=ParameterMap.from_names(names))
+    for i, name in enumerate(names):
+        original = params[name].value
+        step = 1e-6 if name.endswith(".cs") else 1e-4
+        params[name].value = original + step
+        plus = cluster.evaluate(params)
+        params[name].value = original - step
+        minus = cluster.evaluate(params)
+        params[name].value = original
+        np.testing.assert_allclose(
+            jacobian[i], ((plus - minus) / (2 * step))[0], rtol=3e-4, atol=1e-9
+        )
+
+
+def test_joint_quadrature_pipeline_state_output_and_simulation(tmp_path, monkeypatch):
+    spectra, fit_config = quadrature_example(("rr", "ri", "ir", "ii"), phases=(0.0, 0.0))
+    config = PeakFitConfig(fitting=fit_config, noise_level=0.001)
+    config.output.include_timestamp = False
+    config.output.save_simulated = True
+    monkeypatch.setattr(fitting, "read_spectra", lambda *_args, **_kwargs: spectra)
+    peaklist = tmp_path / "centers.list"
+    peaklist.write_text("A23 8.0 4.5\n")
+    data = fitting.load_data(tmp_path / "real.ft2", peaklist, None, config)
+    run = fitting.run_fit(data, config, tmp_path / "results", workers=1)
+    assert run.success
+    fitting.write_fit_run_outputs(run, spectra, config, {"peaklist": peaklist})
+    document = json.loads((run.output_dir / "summary/fit.json").read_text())
+    assert document["metadata"]["quadrature_components"] == ["rr", "ri", "ir", "ii"]
+    assert document["z_axis"]["values"] == [0.0]
+    assert (
+        document["clusters"][0]["analytical_evaluation"]["statistics"]["n_amplitude_parameters"]
+        == 1
+    )
+    restored = load_state(run.output_dir / "metadata/fitting_state.pkl")
+    assert restored.clusters[0].quadrature_components == spectra.quadrature_components
+    np.testing.assert_allclose(
+        restored.clusters[0].evaluate(restored.scalar_params),
+        run.continuation_state.clusters[0].evaluate(run.continuation_state.scalar_params),
+    )
+    assert run.simulation_snapshot is not None
+    simulated = simulate_final_outcome(run.outcome, run.simulation_snapshot, spectra.data)
+    assert simulated is not None
+    np.testing.assert_allclose(simulated, spectra.data, atol=1e-5)
+    with np.load(run.output_dir / "simulated_quadrature.npz") as saved:
+        assert set(saved.files) == set(spectra.quadrature_components)
+        np.testing.assert_allclose(saved["ri"], spectra.data[1], atol=1e-5)
+
+
+def test_legacy_real_only_state_still_evaluates(tmp_path):
+    spectra = make_spectra()
+    peak = make_peak(spectra, FitConfig(lineshape="dqfcosy"))
+    cluster = create_clusters(spectra, [peak], contour_level=2)[0]
+    params = peak.create_params()
+    expected = cluster.evaluate(params)
+    state = FittingState(
+        clusters=[cluster],
+        params=FitParameters.from_parameters(params, [peak]),
+        scalar_params=params,
+        noise=0.001,
+    )
+    payload = state.model_dump()
+    payload["clusters"][0].pop("quadrature_components")
+    payload["clusters"][0].pop("component_indices")
+    path = tmp_path / "legacy.pkl"
+    path.write_bytes(pickle.dumps(payload))
+    restored = load_state(path)
+    assert restored.clusters[0].quadrature_components == ()
+    np.testing.assert_allclose(restored.clusters[0].evaluate(restored.scalar_params), expected)
+
+
+def test_joint_quadrature_reduces_j_linewidth_ambiguity():
+    spectra, config = quadrature_example(("rr", "ri", "ir", "ii"), noise=0.002)
+    peak = make_peak(spectra, config)
+    joint = create_clusters(spectra, [peak], contour_level=2)[0]
+    result_joint = fit_cluster(peak.create_params(), joint, noise=0.002)
+    real = spectra.model_copy(update={"data": spectra.data[:1], "quadrature_components": ()})
+    real_peak = make_peak(real, config)
+    cluster_real = create_clusters(real, [real_peak], contour_level=2)[0]
+    result_real = fit_cluster(real_peak.create_params(), cluster_real, noise=0.002)
+    assert result_joint.success
+    assert result_real.success
+    error_joint = result_joint.params["A23.F2-F3.j"].stderr
+    error_real = result_real.params["A23.F2-F3.j"].stderr
+    assert error_joint is not None
+    assert error_real is not None
+    assert error_joint < error_real * 0.7

@@ -5,7 +5,7 @@ from scipy.ndimage import binary_dilation, generate_binary_structure, label
 from scipy.sparse import coo_matrix, csr_matrix
 from scipy.sparse.csgraph import connected_components as connected_comps
 
-from peakfit.engine.domain.cluster import Cluster
+from peakfit.engine.domain.cluster import Cluster, expand_quadrature_grid
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
@@ -169,6 +169,12 @@ def create_clusters(spectra: Spectra, peaks: list[Peak], contour_level: float) -
         # Extract data for this segment (all planes)
         indices = (slice(None), *grid_indices)
         segmented_data = spectra.data[indices].T.astype(float)
+        component_indices = None
+        if spectra.quadrature_components:
+            segment_indices, component_indices = expand_quadrature_grid(
+                segment_indices, spectra.quadrature_components
+            )
+            segmented_data = segmented_data.T.reshape(-1, 1)
 
         clusters.append(
             Cluster(
@@ -176,6 +182,8 @@ def create_clusters(spectra: Spectra, peaks: list[Peak], contour_level: float) -
                 peaks=peaks_in_segment,
                 grid_indices=segment_indices,
                 data=segmented_data,
+                quadrature_components=spectra.quadrature_components,
+                component_indices=component_indices,
             )
         )
 

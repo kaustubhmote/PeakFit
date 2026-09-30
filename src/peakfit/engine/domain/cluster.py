@@ -27,6 +27,8 @@ class Cluster:
     peaks: list[Peak]
     grid_indices: list[IntArray]
     data: FloatArray
+    quadrature_components: tuple[str, ...] = ()
+    component_indices: IntArray | None = None
     corrections: FloatArray = field(init=False)
 
     def __post_init__(self) -> None:
@@ -64,6 +66,22 @@ class Cluster:
             raise ValueError(msg)
 
         self.corrections = np.zeros_like(self.data, dtype=np.float64)
+        if self.quadrature_components:
+            if (
+                self.component_indices is None
+                or self.n_series != 1
+                or len(self.grid_indices) != _TILTED_DIMENSIONS
+            ):
+                raise ValueError(
+                    "Quadrature observations require component indices and one shared amplitude."
+                )
+            self.component_indices = np.asarray(self.component_indices, dtype=np.intp)
+            if (
+                self.component_indices.shape != (self.n_points,)
+                or np.any(self.component_indices < 0)
+                or np.any(self.component_indices >= len(self.quadrature_components))
+            ):
+                raise ValueError("Quadrature component indices must identify every observation.")
 
     @classmethod
     def from_clusters(cls, clusters: Sequence[Cluster]) -> Cluster:
@@ -107,6 +125,7 @@ class Cluster:
         grid_indices: Sequence[IntArray] | None = None,
         d_matrix: np.ndarray | None = None,
         param_map: ParameterMap | None = None,
+        component_indices: IntArray | None = None,
     ) -> np.ndarray:
         """Evaluate shapes for all peaks on the provided grid positions."""
         grid = list(self.grid_indices) if grid_indices is None else list(grid_indices)
@@ -116,6 +135,10 @@ class Cluster:
             grid,
             d_matrix=d_matrix,
             param_map=param_map,
+            quadrature_components=self.quadrature_components,
+            component_indices=self.component_indices
+            if component_indices is None
+            else component_indices,
         )
 
     @staticmethod
@@ -126,6 +149,8 @@ class Cluster:
         *,
         d_matrix: np.ndarray | None = None,
         param_map: ParameterMap | None = None,
+        quadrature_components: tuple[str, ...] = (),
+        component_indices: IntArray | None = None,
     ) -> np.ndarray:
         """Vectorized evaluation for peaks on provided grid positions.
 
@@ -170,8 +195,9 @@ class Cluster:
         param_indices_map: list[dict[str, IntArray]] = []
 
         for d in range(n_dims):
+            imaginary = _imaginary_selector(quadrature_components, component_indices, d, n_points)
             val, current_derivs, idx_map = _evaluate_single_dimension(
-                d, peaks, params, grid_dims[d], param_map, compute_derivatives
+                d, peaks, params, grid_dims[d], param_map, compute_derivatives, imaginary
             )
 
             dim_vals.append(val)
@@ -205,6 +231,8 @@ class Cluster:
         if self.n_series != other.n_series:
             msg = "Merged clusters must contain the same number of series"
             raise ValueError(msg)
+        if self.quadrature_components != other.quadrature_components:
+            raise ValueError("Merged clusters must use the same quadrature components.")
 
         # Concatenate positions
         new_positions = [
@@ -224,6 +252,12 @@ class Cluster:
             peaks=self.peaks + other.peaks,
             grid_indices=new_positions,
             data=new_data,
+            quadrature_components=self.quadrature_components,
+            component_indices=(
+                np.concatenate((self.component_indices, other.component_indices))
+                if self.component_indices is not None and other.component_indices is not None
+                else None
+            ),
         )
 
 
@@ -234,6 +268,7 @@ def _evaluate_single_dimension(
     grid_dim: np.ndarray,
     param_map: ParameterMap | None,
     compute_derivatives: bool,
+    imaginary: np.ndarray | None = None,
 ) -> tuple[FloatArray, dict[str, FloatArray], dict[str, IntArray]]:
     """Evaluate shapes for a single dimension.
 
@@ -247,11 +282,39 @@ def _evaluate_single_dimension(
     )
 
     x_grid = grid_dim.ravel().astype(np.float64)
-    result = sample_shape.evaluate_cluster(
-        x_grid, cluster_params, compute_derivs=compute_derivatives
-    )
+    if imaginary is None:
+        result = sample_shape.evaluate_cluster(
+            x_grid, cluster_params, compute_derivs=compute_derivatives
+        )
+    else:
+        evaluate = getattr(sample_shape, "evaluate_quadrature_cluster", None)
+        if evaluate is None:
+            raise ValueError("Quadrature fitting requires a lineshape with dispersive profiles.")
+        result = evaluate(x_grid, cluster_params, imaginary, compute_derivs=compute_derivatives)
 
     return result.values, result.derivatives, cluster_params.index_map
+
+
+def expand_quadrature_grid(
+    grid_indices: Sequence[IntArray], components: tuple[str, ...]
+) -> tuple[list[IntArray], IntArray]:
+    """Repeat spatial coordinates in component-major observation order."""
+    n_points = grid_indices[0].size
+    return (
+        [np.tile(indices, len(components)) for indices in grid_indices],
+        np.repeat(np.arange(len(components), dtype=np.intp), n_points),
+    )
+
+
+def _imaginary_selector(
+    components: tuple[str, ...], indices: IntArray | None, dimension: int, n_points: int
+) -> np.ndarray | None:
+    if not components:
+        return None
+    if indices is None or indices.size != n_points:
+        raise ValueError("Quadrature evaluation needs one component index per point.")
+    # Bruker suffixes run direct-to-indirect; grid coordinates run indirect-to-direct.
+    return np.array([code[-1 - dimension] == "i" for code in components])[indices]
 
 
 def _evaluate_tilted_peaks(

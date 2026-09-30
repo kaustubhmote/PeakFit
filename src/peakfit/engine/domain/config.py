@@ -94,6 +94,12 @@ class FitConfig(BaseModel):
         default=False,
         description="Fit rotated peaks in a two-dimensional spectral plane.",
     )
+    use_imaginary: bool = Field(
+        default=False, description="Jointly fit 2–4 DQF-COSY quadrature component planes."
+    )
+    imaginary_paths: dict[Literal["ri", "ir", "ii"], Path] = Field(
+        default_factory=dict, description="Explicit quadrature component paths; replaces discovery."
+    )
     dqfcosy_windows: dict[str, DQFCOSYWindow] = Field(
         default_factory=dict,
         description="Fixed processing inputs per axis; overrides NMRPipe or Bruker headers.",

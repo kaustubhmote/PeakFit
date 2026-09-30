@@ -96,6 +96,8 @@ def update_cluster_corrections(
             external_peaks,
             params,
             cluster.grid_indices,
+            quadrature_components=cluster.quadrature_components,
+            component_indices=cluster.component_indices,
         )
 
         # Get their amplitudes

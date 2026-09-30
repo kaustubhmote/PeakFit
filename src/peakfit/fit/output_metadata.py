@@ -33,6 +33,7 @@ class RunMetadata:
     configuration: dict[str, Any] = field(default_factory=dict)
     command_line: str = ""
     run_duration_seconds: float | None = None
+    quadrature_components: tuple[str, ...] = ()
 
 
 def capture_output_metadata(config: dict[str, Any], input_files: dict[str, Path]) -> RunMetadata:

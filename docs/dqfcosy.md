@@ -21,6 +21,82 @@ uv run peakfit fit experiment/pdata/1 centers.list --lineshape dqfcosy
 Automatic picking is unavailable for `dqfcosy` because the picker finds individual
 lobes rather than multiplet centers. Existing models and defaults are unchanged.
 
+## Fit the imaginary components together
+
+Add `--use-imaginary` to jointly fit the available quadrature planes:
+
+```bash
+uv run peakfit fit experiment/pdata/1/2rr centers.list --lineshape dqfcosy --use-imaginary
+```
+
+For Bruker input, PeakFit discovers `2ri`, `2ir`, and `2ii` beside `2rr`. It requires
+at least one imaginary component, so a joint fit contains two, three, or four
+planes. A processing directory or experiment directory also supports discovery.
+The default without the flag continues to fit only the real spectrum.
+
+Supply components explicitly with repeated `--imaginary COMPONENT=PATH` options:
+
+```bash
+uv run peakfit fit real.ft2 centers.list --lineshape dqfcosy --use-imaginary \
+  --imaginary ir=direct_imaginary.ft2 --imaginary ri=indirect_imaginary.ft2 \
+  --imaginary ii=both_imaginary.ft2
+```
+
+Explicit paths replace automatic discovery. Each path can be a processed Bruker
+binary file with its processing metadata, or a real-valued 2D NMRPipe file
+containing the named component. Components must have matching grids, acquisition
+timing, processing, and intensity scaling. PeakFit checks grids and window
+metadata; it cannot infer arbitrary scaling changes applied outside processing.
+
+Component names follow Bruker convention, with the **direct dimension first**:
+
+| Component | Indirect profile | Direct profile |
+| --- | --- | --- |
+| `rr` | Absorptive | Absorptive |
+| `ri` | Dispersive | Absorptive |
+| `ir` | Absorptive | Dispersive |
+| `ii` | Dispersive | Dispersive |
+
+NMRPipe component files supplied manually must preserve this convention, including
+the imaginary signs from Bruker processing. The [TopSpin processing reference](https://nmr.chem.ucsb.edu/docs/Bruker_NMR_Manuals/processing-reference_v007.pdf)
+identifies `2ir` as direct-dimension imaginary data and `2ri` as indirect-dimension
+imaginary data in section 4.24.
+
+All planes share one positive J, two centers, two intrinsic linewidths, and **one
+amplitude per peak**. Each plane has the appropriate signed absorptive or
+dispersive profile. Use `--phx` and `--phy` to fit small phase corrections for the
+direct and indirect axes. Window inputs remain fixed. Dispersive profiles can
+reduce J–linewidth ambiguity, but uncertainty remains conditional on the spin
+model and processing assumptions.
+
+The objective uses one noise level across components and diagonal noise
+weighting. Local covariance errors do not account for apodization, zero filling,
+or correlations between component noise. Smaller reported errors alone do not
+establish better experimental precision.
+
+The equivalent TOML configuration is:
+
+```toml
+[fitting]
+lineshape = "dqfcosy"
+use_imaginary = true
+
+# Optional. Omit this table to discover Bruker siblings.
+[fitting.imaginary_paths]
+ir = "/data/direct_imaginary.ft2"
+ri = "/data/indirect_imaginary.ft2"
+```
+
+`--z-values` and `--exclude` are unavailable in this mode. Choose a subset by
+supplying its component paths. True pseudo-ND series are outside this mode.
+
+The JSON metadata records ordered `quadrature_components` and the component
+source paths and checksums. Numerical observations and residuals are stored in
+component-major blocks, in that order. The intensity table has one shared
+amplitude, with series coordinate 0. Saved state retains the component indices
+for MCMC and reconstruction. With `output.save_simulated = true`,
+`simulated_quadrature.npz` stores each simulated 2D plane under its component name.
+
 ## Override the detected processing variables
 
 The following settings are examples. Replace them with the actual acquisition and

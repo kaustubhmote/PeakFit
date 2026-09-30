@@ -16,7 +16,10 @@ from __future__ import annotations
 
 import logging
 import multiprocessing
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+import numpy as np
 
 from peakfit.auto_pick import auto_pick_peaks
 from peakfit.auto_pick.logging import log_auto_pick_cycle
@@ -43,7 +46,6 @@ _TILTED_SPECTRAL_DIMENSIONS = 2
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
-    from pathlib import Path
 
     from peakfit.auto_pick.types import AutoPickCycleReport
     from peakfit.engine.domain.config import PeakFitConfig
@@ -77,7 +79,7 @@ def load_data(
         LoadedData container with spectra, peaks, noise, clusters, etc.
     """
     # 1. Load Spectra
-    spectra = read_spectra(spectrum_path, z_values_path, config.exclude_planes)
+    spectra = _load_spectra(spectrum_path, z_values_path, config, reporter)
     if config.fitting.lineshape == "dqfcosy":
         if spectra.n_spectral_dims != _TILTED_SPECTRAL_DIMENSIONS or config.fitting.tilted:
             raise DataIOError("DQF-COSY requires two spectral dimensions and tilted=false.")
@@ -172,6 +174,29 @@ def load_data(
         contour_level=contour,
         clusters=clusters,
     )
+
+
+def _load_spectra(
+    spectrum: Path, z_values: Path | None, config: PeakFitConfig, reporter: Reporter | None
+) -> Spectra:
+    if config.fitting.use_imaginary:
+        if config.fitting.lineshape != "dqfcosy":
+            raise DataIOError("--use-imaginary requires --lineshape dqfcosy.")
+        spectra = read_spectra(
+            spectrum,
+            z_values,
+            config.exclude_planes,
+            use_imaginary=True,
+            imaginary_paths=config.fitting.imaginary_paths,
+        )
+        if reporter is not None:
+            reporter.info(
+                "Fitting quadrature planes together: " + ", ".join(spectra.quadrature_components)
+            )
+        return spectra
+    if config.fitting.imaginary_paths:
+        raise DataIOError("Imaginary component paths require --use-imaginary.")
+    return read_spectra(spectrum, z_values, config.exclude_planes)
 
 
 HIGH_REDCHI = 5.0
@@ -376,7 +401,13 @@ def write_fit_run_outputs(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     writer_config = WriterConfig(formats=tuple(config.output.formats))
+    component_paths = spectra.dic.get("_peakfit_quadrature_paths", {})
+    input_paths = {
+        **input_paths,
+        **{f"spectrum_{component}": Path(path) for component, path in component_paths.items()},
+    }
     metadata = capture_output_metadata(config.model_dump(), input_paths)
+    metadata.quadrature_components = spectra.quadrature_components
     if reporter:
         reporter.action("Writing outputs...")
 
@@ -385,7 +416,7 @@ def write_fit_run_outputs(
         output_dir,
         writer_config,
         metadata=metadata,
-        z_values=spectra.z_values,
+        z_values=np.array([0.0]) if spectra.quadrature_components else spectra.z_values,
         summary=fit_run.summary,
     )
 

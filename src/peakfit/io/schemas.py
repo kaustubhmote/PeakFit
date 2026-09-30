@@ -31,6 +31,7 @@ class RunMetadataSchema(_Schema):
     configuration: dict[str, Any] = Field(default_factory=dict)
     command_line: str = ""
     run_duration_seconds: FiniteFloat | None = None
+    quadrature_components: tuple[Literal["rr", "ri", "ir", "ii"], ...] = ()
 
 
 class FinalParameterSchema(_Schema):

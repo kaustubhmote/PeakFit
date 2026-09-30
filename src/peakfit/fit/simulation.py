@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from peakfit.engine.domain.cluster import Cluster
+from peakfit.engine.domain.cluster import Cluster, expand_quadrature_grid
 from peakfit.engine.domain.params_scalar import Parameters
 
 _MIN_SPECTRUM_NDIM = 2
@@ -40,6 +40,7 @@ class FinalModelCluster:
     n_points: int
     n_grid_dimensions: int
     grid_index_shapes: tuple[tuple[int, ...], ...]
+    quadrature_components: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,8 +107,21 @@ def simulate_final_outcome(
             continue
         cluster = snapshots[cluster_outcome.cluster_id]
         evaluation = _validate_usable_projection(cluster_outcome, cluster, n_series)
+        component_indices = None
+        if cluster.quadrature_components:
+            component_indices = np.repeat(
+                np.arange(len(cluster.quadrature_components), dtype=np.intp),
+                int(np.prod(grid_shape)),
+            )
         shapes = np.asarray(
-            Cluster.evaluate_peaks(cluster.peaks, parameters, positions), dtype=np.float64
+            Cluster.evaluate_peaks(
+                cluster.peaks,
+                parameters,
+                positions,
+                quadrature_components=cluster.quadrature_components,
+                component_indices=component_indices,
+            ),
+            dtype=np.float64,
         )
         expected_shapes = (len(cluster.peaks), model.shape[0])
         if shapes.shape != expected_shapes:
@@ -124,7 +138,7 @@ def simulate_final_outcome(
 
     if usable_count == 0:
         return None
-    return model.T.reshape((n_series, *grid_shape)).astype(float)
+    return model.T.reshape(output_data.shape).astype(float)
 
 
 def _validate_capture_inputs(
@@ -179,6 +193,7 @@ def _freeze_cluster_geometry(cluster: Cluster) -> FinalModelCluster:
         n_points=cluster.n_points,
         n_grid_dimensions=len(cluster.grid_indices),
         grid_index_shapes=tuple(tuple(indices.shape) for indices in cluster.grid_indices),
+        quadrature_components=cluster.quadrature_components,
     )
 
 
@@ -268,6 +283,15 @@ def _full_grid_positions(
     n_points = int(np.prod(grid_shape, dtype=np.intp))
     if not positions or any(position.shape != (n_points,) for position in positions):
         raise ValueError("Full-grid indices must contain one flat coordinate per output point")
+    component_sets = {cluster.quadrature_components for cluster in snapshot.clusters}
+    if len(component_sets) != 1:
+        raise ValueError("Simulation clusters must use the same quadrature components.")
+    components = next(iter(component_sets))
+    if components:
+        if n_series != len(components):
+            raise ValueError("Simulated plane count must match the quadrature components.")
+        positions, _ = expand_quadrature_grid(positions, components)
+        n_series = 1
     return n_series, grid_shape, positions
 
 

@@ -158,7 +158,8 @@ def test_bruker_si_can_truncate_but_zero_filling_does_not_extend_timing():
     assert zero_filled.acquisition_time == pytest.approx(1024 / 8000)
 
 
-def test_nmrglue_bruker_dictionaries_supply_both_windows_without_config(tmp_path):
+@pytest.mark.parametrize("components", [(), ("ri",), ("ir", "ii"), ("ri", "ir", "ii")])
+def test_nmrglue_bruker_dictionaries_supply_both_windows_without_config(tmp_path, components):
     experiment = tmp_path / "cosy"
     processed = _make_bruker_directory(experiment / "pdata" / "1")
     acquisition = {"TD": 2048, "SW_h": 8000.0, "SFO1": 600.004, "AQ_mod": 3, "NUC1": "<1H>"}
@@ -187,7 +188,25 @@ def test_nmrglue_bruker_dictionaries_supply_both_windows_without_config(tmp_path
             {"_comments": [], "_coreheader": [], **parameters}, str(path), overwrite=True
         )
     (processed / "2rr").write_bytes(np.zeros((32, 32), dtype="<i4").tobytes())
-    spectra = spectrum_reader.read_spectra(processed)
+    for index, component in enumerate(components, 1):
+        (processed / f"2{component}").write_bytes(np.full((32, 32), index, dtype="<i4").tobytes())
+    spectra = spectrum_reader.read_spectra(processed / "2rr", use_imaginary=bool(components))
+    assert spectra.data.shape == (1 + len(components), 32, 32)
+    assert spectra.quadrature_components == (("rr", *components) if components else ())
+    for index in range(1, 1 + len(components)):
+        np.testing.assert_array_equal(spectra.data[index], index)
+    if components:
+        custom = processed / "custom_component.bin"
+        custom.write_bytes((processed / f"2{components[0]}").read_bytes())
+        manual = spectrum_reader.read_spectra(
+            processed, use_imaginary=True, imaginary_paths={"ri": custom}
+        )
+        assert manual.quadrature_components == ("rr", "ri")
+        assert manual.data.shape[0] == 2  # Explicit input replaces sibling discovery.
+        np.testing.assert_array_equal(manual.data[1], 1)
+    else:
+        with pytest.raises(ValueError, match="at least one imaginary component"):
+            spectrum_reader.read_spectra(processed, use_imaginary=True)
     config = FitConfig(lineshape="dqfcosy")
     shapes = create_shapes(spectra, config, "A23", [8.0, 4.5], get_shape_names(config, spectra))
     assert all(key in spectra.dic for key in ("acqus", "acqu2s", "procs", "proc2s"))

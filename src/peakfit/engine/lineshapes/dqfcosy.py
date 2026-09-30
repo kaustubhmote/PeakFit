@@ -193,6 +193,7 @@ class DQFCOSY(SimpleSingletBase):
         sign: FloatArray,
         cluster_params: ClusterParameters,
         compute_derivs: bool = False,
+        imaginary: np.ndarray | None = None,
     ) -> LineshapeResult:
         """Evaluate the phased antiphase doublet on center-relative Hz offsets."""
         lw = cluster_params.extras["lw"]
@@ -201,14 +202,54 @@ class DQFCOSY(SimpleSingletBase):
         rotation = np.exp(1j * np.deg2rad(phases))
         values, derivatives = antiphase_profile(offsets_hz, lw, coupling, self.window)
         phased = values * rotation
+
+        def project(value: ComplexArray) -> FloatArray:
+            # Bruker imaginary quadrature has the opposite sign to our
+            # negative-frequency Fourier kernel. Keep the real-only phase convention.
+            return sign * (
+                value.real
+                if imaginary is None
+                else np.where(imaginary[:, None], -value.imag, value.real)
+            )
+
         if not compute_derivs:
-            return LineshapeResult(values=sign * phased.real)
+            return LineshapeResult(values=project(phased))
         return LineshapeResult(
-            values=sign * phased.real,
+            values=project(phased),
             derivatives={
-                "offset": sign * (rotation * derivatives["dw"]).real,
-                "lw": sign * (rotation * derivatives["lw"]).real,
-                "j": sign * (rotation * derivatives["j"]).real,
-                "phase": sign * (1j * np.pi / 180 * phased).real,
+                "offset": project(rotation * derivatives["dw"]),
+                "lw": project(rotation * derivatives["lw"]),
+                "j": project(rotation * derivatives["j"]),
+                "phase": project(1j * np.pi / 180 * phased),
             },
         )
+
+    def evaluate_quadrature_cluster(
+        self,
+        x_grid: FloatArray,
+        cluster_params: ClusterParameters,
+        imaginary: np.ndarray,
+        compute_derivs: bool = False,
+    ) -> LineshapeResult:
+        """Select the absorptive or dispersive profile for each observation."""
+        # A 2D component grid repeats each axis coordinate many times. Transform
+        # only distinct coordinates, then expand the two quadrature profiles.
+        grid, inverse = np.unique(x_grid, return_inverse=True)
+        positions = cluster_params.extras["cs"]
+        offsets, sign = self._grid.compute_offsets(grid, positions)
+        absorptive = self.evaluate_offsets(offsets, sign, cluster_params, compute_derivs)
+        dispersive = self.evaluate_offsets(
+            offsets, sign, cluster_params, compute_derivs, np.ones(grid.size, dtype=bool)
+        )
+        values = np.where(
+            imaginary[:, None], dispersive.values[inverse], absorptive.values[inverse]
+        )
+        derivatives = {
+            key: np.where(
+                imaginary[:, None], dispersive.derivatives[key][inverse], derivative[inverse]
+            )
+            for key, derivative in absorptive.derivatives.items()
+        }
+        if "offset" in derivatives:
+            derivatives["cs"] = derivatives.pop("offset") * (-self._grid.spec_params.ppm2hz(1.0))
+        return LineshapeResult(values=values, derivatives=derivatives)

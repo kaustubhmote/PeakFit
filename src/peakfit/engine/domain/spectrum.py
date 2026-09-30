@@ -10,6 +10,7 @@ from peakfit.engine.domain.coordinates import DimensionContext
 from peakfit.shared.typing import FloatArray
 
 _MIN_SPECTRA_NDIM = 2
+_QUADRATURE_DIMENSIONS = 2
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -209,6 +210,7 @@ class Spectra(BaseModel):
     data: FloatArray = Field(description="Spectrum data (FloatArray)")
     z_values: FloatArray = Field(description="Z-values array (FloatArray)")
     pseudo_dim_added: bool = False
+    quadrature_components: tuple[str, ...] = ()
 
     @field_validator("data", mode="before")
     @classmethod
@@ -235,6 +237,17 @@ class Spectra(BaseModel):
         # Initialize z_values if empty
         if self.z_values.size == 0:
             self.z_values = np.arange(self.data.shape[0], dtype=np.float64)
+        if self.quadrature_components:
+            components = self.quadrature_components
+            if (
+                self.n_spectral_dims != _QUADRATURE_DIMENSIONS
+                or len(components) not in {2, 3, 4}
+                or components[0] != "rr"
+                or len(set(components)) != len(components)
+                or set(components) - {"rr", "ri", "ir", "ii"}
+                or len(components) != self.data.shape[0]
+            ):
+                raise ValueError("Quadrature data requires 2–4 unique 2D planes, starting with rr.")
         return self
 
     params: list[SpectralParameters] = Field(description="Spectral parameters for all dimensions")

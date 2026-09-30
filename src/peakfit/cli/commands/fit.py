@@ -93,6 +93,16 @@ def fit_command(
         LineshapeName,
         typer.Option("--lineshape", "-l", help="Lineshape model"),
     ] = "auto",
+    use_imaginary: Annotated[
+        bool,
+        typer.Option("--use-imaginary", help="Jointly fit available DQF-COSY quadrature planes"),
+    ] = False,
+    imaginary: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--imaginary", help="Component path: ri=PATH, ir=PATH, or ii=PATH; repeat as needed"
+        ),
+    ] = None,
     tilted: Annotated[
         bool,
         typer.Option("--tilted/--axis-aligned", help="Fit rotated two-dimensional peaks"),
@@ -215,6 +225,8 @@ def fit_command(
         phy=phy,
         exclude=exclude,
         optimizer=optimizer,
+        use_imaginary=use_imaginary,
+        imaginary=imaginary,
     )
 
     if fit_config.output.headless:

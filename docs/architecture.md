@@ -39,7 +39,15 @@ fit orchestration, uncertainty analysis, plotting, and output generation.
    from acquisition and processing dictionaries; per-axis configuration overrides
    the detected settings. Their fitting rectangles include the
    marked zero-signal midpoint and all four lobes. Rotation and automatic peak
-   picking are unavailable for this model. See [`dqfcosy.md`](dqfcosy.md).
+   picking are unavailable for this model. `--use-imaginary` stacks two to four
+   quadrature planes. Clustering expands their spatial coordinates into
+   component-major observations with an explicit component index; each cluster
+   has one amplitude series shared across all components. DQF-COSY evaluates the
+   correct real or imaginary profile on each axis, preserving analytic shared-J
+   derivatives. The existing real least-squares and MCMC paths then operate on
+   all observations together. Simulation snapshots retain component identities
+   and reconstruct all planes. JSON metadata identifies the component order;
+   the intensity table records one shared amplitude. See [`dqfcosy.md`](dqfcosy.md).
 4. `fit.final_outcome` freezes completed scientific truth by run-local
    `cluster_id` against the terminal correction revision, while
    `fit.output_metadata` captures non-scientific run metadata; `io` reads inputs

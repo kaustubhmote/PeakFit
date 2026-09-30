@@ -1,7 +1,7 @@
 """Spectrum readers for NMRPipe and processed Bruker data."""
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
 import numpy as np
 from nmrglue.fileio import bruker, pipe
@@ -12,7 +12,7 @@ from peakfit.engine.domain.param_id import PSEUDO_AXIS
 from peakfit.engine.domain.spectrum import Spectra, SpectralParameters, get_dimension_label
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
 
 
 T = TypeVar("T", float, NDArray[Any])
@@ -37,6 +37,7 @@ _BRUKER_TPPI = 3
 _BRUKER_COMPLEX_MODES = {4, 5, 6}  # States, States-TPPI, Echo-Antiecho.
 _BRUKER_COMPLEX_TRANSFORMS = {5, 6}
 _MIN_SINE_SHIFT = 2.0
+_QUADRATURE_DIMENSIONS = 2
 _MIN_TIME_POINTS = 2
 
 
@@ -358,8 +359,14 @@ def _read_bruker_spectral_parameters(
     return params
 
 
-def _read_bruker(path: Path) -> tuple[dict[str, Any], NDArray[Any], list[SpectralParameters], bool]:
-    dic, original_data = bruker.read_pdata(str(path))
+def _read_bruker(
+    path: Path, binary_name: str | None = None
+) -> tuple[dict[str, Any], NDArray[Any], list[SpectralParameters], bool]:
+    dic, original_data = (
+        bruker.read_pdata(str(path))
+        if binary_name is None
+        else bruker.read_pdata(str(path), bin_files=[binary_name])
+    )
     original_data = np.asarray(original_data, dtype=np.float32)
     udic = bruker.guess_udic(dic, original_data, strip_fake=True)
 
@@ -377,6 +384,9 @@ def read_spectra(
     path_spectra: Path,
     path_z_values: Path | None = None,
     exclude_list: Sequence[int] | None = None,
+    *,
+    use_imaginary: bool = False,
+    imaginary_paths: Mapping[Literal["ri", "ir", "ii"], Path] | None = None,
 ) -> Spectra:
     """Read an NMRPipe or processed Bruker spectrum and optional plane values."""
     resolved_path = resolve_spectrum_path(path_spectra)
@@ -404,9 +414,93 @@ def read_spectra(
         params=params,
         pseudo_dim_added=pseudo_dim_added,
     )
+    if imaginary_paths and not use_imaginary:
+        raise ValueError("Imaginary component paths require --use-imaginary.")
+    if use_imaginary:
+        if path_z_values is not None or exclude_list:
+            raise ValueError("Quadrature fitting cannot use --z-values or --exclude.")
+        return _read_quadrature_components(spectra, resolved_path, imaginary_paths)
     spectra.exclude_planes(exclude_list)
 
     return spectra
+
+
+def _read_quadrature_components(
+    real: Spectra, resolved_path: Path, supplied: Mapping[Literal["ri", "ir", "ii"], Path] | None
+) -> Spectra:
+    """Stack identified component planes without treating them as independent series."""
+    if real.n_spectral_dims != _QUADRATURE_DIMENSIONS or real.data.shape[0] != 1:
+        raise ValueError("--use-imaginary requires one phase-sensitive 2D spectrum.")
+    paths = {str(key): value for key, value in (supplied or {}).items()}
+    if set(paths) - {"ri", "ir", "ii"}:
+        raise ValueError("Imaginary component names must be ri, ir, or ii.")
+    if not paths and resolved_path.is_dir():
+        paths = {
+            component: resolved_path / f"2{component}"
+            for component in ("ri", "ir", "ii")
+            if (resolved_path / f"2{component}").is_file()
+        }
+    if not paths:
+        raise ValueError(
+            "--use-imaginary requires at least one imaginary component. "
+            "Place 2ri/2ir/2ii beside 2rr, or supply --imaginary ri=PATH, ir=PATH, or ii=PATH."
+        )
+    components = ["rr"]
+    planes = [real.data[0]]
+    used_paths = {"rr": str(resolved_path / "2rr" if resolved_path.is_dir() else resolved_path)}
+    for component in ("ri", "ir", "ii"):
+        if component not in paths:
+            continue
+        path = Path(paths[component]).expanduser().resolve()
+        if not path.is_file():
+            raise ValueError(f"Imaginary component {component} is not a file: {path}")
+        if (path.parent / "procs").is_file():
+            dic, data, params, added = _read_bruker(path.parent, path.name)
+            other = Spectra(
+                dic=dic, data=data, params=params, z_values=np.array([0.0]), pseudo_dim_added=added
+            )
+        else:
+            other = read_spectra(path)
+        _validate_component_grid(real, other, component)
+        components.append(component)
+        planes.append(other.data[0])
+        used_paths[component] = str(path)
+    dic = dict(real.dic)
+    dic["_peakfit_quadrature_paths"] = used_paths
+    params = [real.params[0].model_copy(update={"size": len(components)}), *real.spectral_params]
+    return Spectra(
+        dic=dic,
+        data=np.stack(planes),
+        params=params,
+        z_values=np.arange(len(components), dtype=float),
+        pseudo_dim_added=True,
+        quadrature_components=tuple(components),
+    )
+
+
+def _validate_component_grid(real: Spectra, other: Spectra, component: str) -> None:
+    if other.data.shape != real.data.shape or other.n_spectral_dims != _QUADRATURE_DIMENSIONS:
+        raise ValueError(f"Imaginary component {component} must match the real 2D grid shape.")
+    for expected, actual in zip(real.spectral_params, other.spectral_params, strict=True):
+        geometry = ("size", "sw", "obs", "car")
+        if any(
+            not np.isclose(getattr(expected, field), getattr(actual, field), rtol=1e-8, atol=1e-8)
+            for field in geometry
+        ):
+            raise ValueError(f"Imaginary component {component} has a different spectral grid.")
+        processing = (
+            "aq_time",
+            "apocode",
+            "apodq1",
+            "apodq2",
+            "apodq3",
+            "p180",
+            "td_size",
+            "ft_size",
+            "dqfcosy_window",
+        )
+        if any(getattr(expected, field) != getattr(actual, field) for field in processing):
+            raise ValueError(f"Imaginary component {component} has different processing or timing.")
 
 
 __all__ = [

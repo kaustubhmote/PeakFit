@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, cast, get_args
+from typing import TYPE_CHECKING, Literal, cast, get_args
 
 import typer
 
@@ -42,10 +42,13 @@ def build_fit_config(
     phy: bool,
     exclude: list[int] | None,
     optimizer: str,
+    use_imaginary: bool = False,
+    imaginary: list[str] | None = None,
 ) -> PeakFitConfig:
     """Build fit config from CLI options or a TOML config file."""
     validate_optimizer(optimizer)
     normalized_formats = normalize_output_formats(formats)
+    imaginary_paths = _parse_imaginary_paths(imaginary)
 
     if config is not None:
         cfg = load_config(config)
@@ -59,6 +62,10 @@ def build_fit_config(
             cfg.noise_level = noise
         if contour_level is not None:
             cfg.clustering.contour_level = contour_level
+        cfg.fitting.use_imaginary = cfg.fitting.use_imaginary or use_imaginary
+        cfg.fitting.imaginary_paths = (
+            imaginary_paths if imaginary is not None else cfg.fitting.imaginary_paths
+        )
         return cfg
 
     fit_phase = []
@@ -83,6 +90,8 @@ def build_fit_config(
             fix_positions=fixed,
             fit_j_coupling=jx,
             fit_phase=fit_phase,
+            use_imaginary=use_imaginary,
+            imaginary_paths=imaginary_paths,
         ),
         clustering=ClusterConfig(contour_level=contour_level),
         output=output_config,
@@ -94,6 +103,19 @@ def build_fit_config(
         cfg.fitting.max_iterations = BASIN_HOPPING_NITER
 
     return cfg
+
+
+def _parse_imaginary_paths(items: list[str] | None) -> dict[Literal["ri", "ir", "ii"], Path]:
+    paths: dict[Literal["ri", "ir", "ii"], Path] = {}
+    for item in items or []:
+        component, separator, path = item.partition("=")
+        if not separator or component not in {"ri", "ir", "ii"} or not path:
+            raise typer.BadParameter("Use --imaginary ri=PATH, ir=PATH, or ii=PATH.")
+        key = cast("Literal['ri', 'ir', 'ii']", component)
+        if key in paths:
+            raise typer.BadParameter(f"Duplicate imaginary component: {component}.")
+        paths[key] = Path(path).expanduser().resolve()
+    return paths
 
 
 def validate_optimizer(optimizer: str) -> None:

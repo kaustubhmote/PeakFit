@@ -83,6 +83,8 @@ Useful fit options:
 
 - `--config peakfit.toml` for reproducible settings.
 - `--lineshape auto|gaussian|lorentzian|pvoigt|sp1|sp2|no_apod|dqfcosy`.
+- `--use-imaginary`: jointly fit 2–4 DQF-COSY quadrature planes. Bruker siblings
+  are discovered automatically; `--imaginary ir=PATH` supplies explicit components.
 - `--tilted` to fit a rotated peak in a two-dimensional spectral plane.
 - `--optimizer varpro|basin_hopping`.
 - `--refine N` for exactly `N` optimizer passes; corrections update only between

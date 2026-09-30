@@ -68,7 +68,7 @@ def _summary_document(
 
 
 def _serialize_metadata(metadata: RunMetadata) -> dict[str, Any]:
-    return {
+    document: dict[str, Any] = {
         "timestamp": metadata.timestamp,
         "software_version": metadata.software_version,
         "git_commit": metadata.git_commit,
@@ -79,6 +79,9 @@ def _serialize_metadata(metadata: RunMetadata) -> dict[str, Any]:
         "command_line": metadata.command_line,
         "run_duration_seconds": _optional_finite_value(metadata.run_duration_seconds),
     }
+    if metadata.quadrature_components:
+        document["quadrature_components"] = list(metadata.quadrature_components)
+    return document
 
 
 def _serialize_cluster(cluster: FinalClusterOutcome) -> dict[str, Any]:

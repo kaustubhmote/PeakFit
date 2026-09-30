@@ -260,6 +260,34 @@ class OutputConfig(BaseModel):
     )
 
 
+class SpectrumLayerStyle(BaseModel):
+    """Appearance of one spectrum's contour lines."""
+
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+    color: str = Field(default="C0", min_length=1, description="Matplotlib color name or hex code.")
+    linewidth: float | None = Field(
+        default=None,
+        gt=0,
+        description="Contour linewidth in points; omit for Matplotlib's default.",
+    )
+    colormap: str | None = Field(
+        default=None,
+        min_length=1,
+        description="Matplotlib colormap name; takes precedence over color.",
+    )
+
+
+class PlotConfig(BaseModel):
+    """Contour appearance for the experimental, simulated, and difference spectra."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    experimental: SpectrumLayerStyle = Field(default_factory=SpectrumLayerStyle)
+    simulated: SpectrumLayerStyle = Field(default_factory=lambda: SpectrumLayerStyle(color="C1"))
+    difference: SpectrumLayerStyle = Field(default_factory=lambda: SpectrumLayerStyle(color="C2"))
+
+
 class PeakFitConfig(BaseModel):
     """Top-level PeakFit configuration for fitting, clustering, and output.
 
@@ -308,6 +336,7 @@ class PeakFitConfig(BaseModel):
     clustering: ClusterConfig = Field(default_factory=ClusterConfig)
     auto_peak: AutoPeakConfig = Field(default_factory=AutoPeakConfig)
     output: OutputConfig = Field(default_factory=OutputConfig)
+    plot: PlotConfig = Field(default_factory=PlotConfig)
     parameters: ParameterConfig = Field(
         default_factory=ParameterConfig,
         description="Parameter constraints and position windows.",

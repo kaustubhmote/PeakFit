@@ -38,3 +38,5 @@ def test_plot_spectrum_help_mentions_bruker_input() -> None:
     help_text = rendered_help("plot", "spectrum")
 
     assert "NMRPipe file or processed Bruker spectrum" in help_text
+    assert "--config" in help_text
+    assert "TOML file with contour styles" in help_text

@@ -1,0 +1,18 @@
+# Start with the current appearance, then edit and restart the viewer:
+# peakfit plot spectrum -s data/pseudo3d.ft2 -r Fits/<run_dir> -c data/plot.toml
+# Widths are in points. Uncomment a colormap to override the fixed color.
+
+[plot.experimental]
+color = "C0"
+linewidth = 1.5
+# colormap = "Blues"
+
+[plot.simulated]
+color = "C1"
+linewidth = 1.5
+# colormap = "Oranges"
+
+[plot.difference]
+color = "C2"
+linewidth = 1.5
+# colormap = "RdBu_r"

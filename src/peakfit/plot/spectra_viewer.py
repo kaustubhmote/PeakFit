@@ -11,6 +11,7 @@ from peakfit.io.readers.spectrum import read_spectra
 from peakfit.plot.widgets.matplotlib_backend import MatplotlibBackend
 
 if TYPE_CHECKING:
+    from peakfit.engine.domain.config import PlotConfig
     from peakfit.engine.domain.spectrum import SpectralParameters
     from peakfit.plot.reconstruction import SpectraReconstructor
     from peakfit.shared.typing import FloatArray
@@ -34,16 +35,8 @@ from peakfit.plot.qt_core import (
 )
 from peakfit.shared.paths import format_path
 
-# Configuration
-CONTOUR_NUM = 25
-CONTOUR_FACTOR = 1.40
 _MIN_VIEWER_NDIM = 3
 _MIN_VIEWER_SPECTRAL_DIMS = 2
-CONTOUR_COLORS = {
-    "spectrum_exp": "C0",
-    "spectrum_sim": "C1",
-    "difference": "C2",
-}
 
 
 def _report_error(message: str) -> None:
@@ -164,6 +157,8 @@ class SpectraViewer(QMainWindow):
         data2: NMRData | None,
         plist: pd.DataFrame | None,
         reconstructor: SpectraReconstructor | None = None,
+        *,
+        plot_config: PlotConfig | None = None,
     ) -> None:
         super().__init__()
         self.data1 = data1
@@ -186,7 +181,7 @@ class SpectraViewer(QMainWindow):
         self.noise_level = float(estimate_noise(self.data1.data))
         self.contour_level = 5
 
-        self.backend = MatplotlibBackend()
+        self.backend = MatplotlibBackend(plot_config=plot_config)
 
         self._init_ui()
 

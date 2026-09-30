@@ -53,6 +53,9 @@ fit orchestration, uncertainty analysis, plotting, and output generation.
    `fit.output_metadata` captures non-scientific run metadata; `io` reads inputs
    and projects the outcome into structured artifacts.
 5. `mcmc` and `plot` run post-fit workflows from canonical fit outputs.
+   Spectrum contour styles use the `[plot]` models in `engine.domain.config`.
+   `plot.styles` validates Matplotlib names and translates these models into
+   drawing options. The numerical engine does not import Matplotlib or Qt.
 6. `ui` renders terminal output where the CLI needs it.
 
 ## Boundaries

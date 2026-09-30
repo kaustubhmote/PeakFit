@@ -5,7 +5,9 @@ from typing import TYPE_CHECKING, Any, Protocol
 import numpy as np
 from matplotlib.figure import Figure
 
+from peakfit.engine.domain.config import PlotConfig
 from peakfit.plot.qt_core import QVBoxLayout, QWidget
+from peakfit.plot.styles import contour_options
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -93,11 +95,6 @@ except (ModuleNotFoundError, ImportError):
 
 CONTOUR_NUM = 25
 CONTOUR_FACTOR = 1.40
-CONTOUR_COLORS = {
-    "spectrum_exp": "C0",
-    "spectrum_sim": "C1",
-    "difference": "C2",
-}
 
 
 def _calculate_1d_slice(
@@ -183,7 +180,10 @@ def _calculate_1d_slice(
 class MatplotlibBackend(QWidget):
     """Matplotlib widget for the spectrum viewer with view-slicing optimization."""
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(
+        self, parent: QWidget | None = None, *, plot_config: PlotConfig | None = None
+    ) -> None:
+        self.contour_options = contour_options(plot_config or PlotConfig())
         QWidget.__init__(self, parent)
         self.figure = Figure(figsize=(5, 5), dpi=100)
 
@@ -243,7 +243,7 @@ class MatplotlibBackend(QWidget):
                 self.ax.contour(
                     data_view,
                     levels=levels,
-                    colors=CONTOUR_COLORS[key],
+                    **self.contour_options[key],
                     alpha=0.7,
                     extent=extent,
                 )

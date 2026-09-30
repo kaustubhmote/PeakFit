@@ -10,6 +10,8 @@ import numpy as np
 import pandas as pd
 import typer
 
+from peakfit.engine.domain.config import PlotConfig
+from peakfit.io.config import load_config
 from peakfit.io.readers.results import ResultsLoader
 from peakfit.plot.outputs import (
     PlotOutput,
@@ -19,6 +21,7 @@ from peakfit.plot.outputs import (
     generate_mcmc_diagnostics,
 )
 from peakfit.plot.reconstruction import SpectraReconstructor
+from peakfit.plot.styles import contour_options
 from peakfit.ui.branding import show_command_summary
 from peakfit.ui.console import Verbosity, display_path, set_verbosity
 from peakfit.ui.messages import show_error_with_details, success, warning
@@ -159,6 +162,17 @@ def plot_spectrum(
             "--results", "-r", help="Results directory (optional)", exists=True, resolve_path=True
         ),
     ] = None,
+    config: Annotated[
+        Path | None,
+        typer.Option(
+            "--config",
+            "-c",
+            help="TOML file with contour styles",
+            exists=True,
+            dir_okay=False,
+            resolve_path=True,
+        ),
+    ] = None,
     verbose: Annotated[
         bool,
         typer.Option("--verbose", "-v", help="Verbose output"),
@@ -183,10 +197,18 @@ def plot_spectrum(
                 {
                     "Spectrum": display_path(spectrum),
                     "Results overlay": display_path(results) if results else "None",
+                    "Plot config": display_path(config) if config else "Defaults",
                 },
             )
         ],
     )
+    try:
+        plot_config = load_config(config).plot if config else PlotConfig()
+        contour_options(plot_config)
+    except (OSError, ValueError) as e:
+        show_error_with_details("loading plot configuration", e)
+        raise typer.Exit(1) from e
+
     data_exp = _load_spectrum(spectrum)
     reconstructor = _init_reconstructor(results)
     plist = _extract_peaks(reconstructor, data_exp)
@@ -196,7 +218,13 @@ def plot_spectrum(
         from peakfit.plot.spectra_viewer import SpectraViewer  # noqa: PLC0415
 
         app = QApplication.instance() or QApplication(sys.argv)
-        viewer = SpectraViewer(data1=data_exp, data2=None, plist=plist, reconstructor=reconstructor)
+        viewer = SpectraViewer(
+            data1=data_exp,
+            data2=None,
+            plist=plist,
+            reconstructor=reconstructor,
+            plot_config=plot_config,
+        )
         viewer.show()
         app.exec()
     except Exception as e:

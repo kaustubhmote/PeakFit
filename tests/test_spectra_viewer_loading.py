@@ -8,6 +8,7 @@ from typer.testing import CliRunner
 
 from peakfit.cli.app import app
 from peakfit.cli.commands import plot as plot_command
+from peakfit.engine.domain.config import PlotConfig
 from peakfit.io.readers import spectrum as spectrum_reader
 from peakfit.plot import qt_core, spectra_viewer
 from peakfit.plot.spectra_viewer import NMRData
@@ -63,8 +64,9 @@ def test_nmr_data_loads_direct_bruker_2rr_path(
     assert loaded.ylim == pytest.approx((145.0, 111.6666666667))
 
 
+@pytest.mark.parametrize("configured", [False, True])
 def test_plot_spectrum_command_loads_bruker_2rr_with_results(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, configured: bool
 ) -> None:
     binary, read_paths = _stub_bruker_2rr(monkeypatch, tmp_path)
     results = tmp_path / "results"
@@ -88,6 +90,7 @@ def test_plot_spectrum_command_loads_bruker_2rr_with_results(
     class FakeViewer:
         def __init__(self, **kwargs: object) -> None:
             captured["data"] = kwargs["data1"]
+            captured["plot_config"] = kwargs["plot_config"]
 
         def show(self) -> None:
             captured["shown"] = True
@@ -96,10 +99,12 @@ def test_plot_spectrum_command_loads_bruker_2rr_with_results(
     monkeypatch.setattr(qt_core, "QApplication", FakeApplication)
     monkeypatch.setattr(spectra_viewer, "SpectraViewer", FakeViewer)
 
-    result = CliRunner().invoke(
-        app,
-        ["plot", "spectrum", "--spectrum", str(binary), "--results", str(results)],
-    )
+    args = ["plot", "spectrum", "--spectrum", str(binary), "--results", str(results)]
+    if configured:
+        config = tmp_path / "plot.toml"
+        config.write_text('[plot.simulated]\ncolor = "#aabbcc"\nlinewidth = 0.75\n')
+        args += ["--config", str(config)]
+    result = CliRunner().invoke(app, args)
 
     assert result.exit_code == 0, result.output
     assert read_paths == [str(binary.parent)]
@@ -107,3 +112,7 @@ def test_plot_spectrum_command_loads_bruker_2rr_with_results(
     assert isinstance(captured["data"], NMRData)
     assert captured["shown"] is True
     assert captured["executed"] is True
+    plot_config = captured["plot_config"]
+    assert isinstance(plot_config, PlotConfig)
+    assert plot_config.simulated.color == ("#aabbcc" if configured else "C1")
+    assert plot_config.simulated.linewidth == (0.75 if configured else None)

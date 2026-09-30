@@ -7,6 +7,7 @@ import numpy as np
 
 from peakfit.engine.domain.coordinates import rotate_ppm_offsets
 from peakfit.engine.domain.peaks import Peak
+from peakfit.engine.domain.processing import evaluate_processed_peaks
 from peakfit.shared.typing import FloatArray, IntArray
 
 if TYPE_CHECKING:
@@ -161,14 +162,15 @@ class Cluster:
             msg = "grid_indices cannot be empty"
             raise ValueError(msg)
 
-        grid_dims: list[np.ndarray] | np.ndarray = list(grid_indices)
-        if isinstance(grid_dims, np.ndarray):
-            grid_dims = [grid_dims]
+        grid_dims = list(grid_indices)
 
         n_peaks = len(peaks)
         n_points = grid_dims[0].size
         n_dims = len(grid_dims)
         compute_derivatives = d_matrix is not None and param_map is not None
+
+        if peaks and getattr(peaks[0].shapes[0], "processing_window", None) is not None:
+            return evaluate_processed_peaks(peaks, params, grid_dims, d_matrix, param_map)
 
         has_tilted_peak = any(peak.tilted for peak in peaks)
         has_nonzero_tilt = any(

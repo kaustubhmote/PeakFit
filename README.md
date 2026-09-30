@@ -86,6 +86,9 @@ Useful fit options:
 - `--use-imaginary`: jointly fit 2–4 DQF-COSY quadrature planes. Bruker siblings
   are discovered automatically; `--imaginary ir=PATH` supplies explicit components.
 - `--tilted` to fit a rotated peak in a two-dimensional spectral plane.
+- `--include-window-functions` to apply recorded acquisition sampling and windows
+  to intrinsic Gaussian, Lorentzian, or pseudo-Voigt profiles. See
+  [processing-aware fitting](docs/processing-aware-fitting.md).
 - `--optimizer varpro|basin_hopping`.
 - `--refine N` for exactly `N` optimizer passes; corrections update only between
   passes. Existing commands that relied on the former `N + 1` pass behavior

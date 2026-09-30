@@ -42,6 +42,7 @@ def build_fit_config(
     phy: bool,
     exclude: list[int] | None,
     optimizer: str,
+    include_window_functions: bool = False,
     use_imaginary: bool = False,
     imaginary: list[str] | None = None,
 ) -> PeakFitConfig:
@@ -62,6 +63,7 @@ def build_fit_config(
             cfg.noise_level = noise
         if contour_level is not None:
             cfg.clustering.contour_level = contour_level
+        cfg.fitting.include_window_functions |= include_window_functions
         cfg.fitting.use_imaginary = cfg.fitting.use_imaginary or use_imaginary
         cfg.fitting.imaginary_paths = (
             imaginary_paths if imaginary is not None else cfg.fitting.imaginary_paths
@@ -86,6 +88,7 @@ def build_fit_config(
         fitting=FitConfig(
             lineshape=lineshape,
             tilted=tilted,
+            include_window_functions=include_window_functions,
             refine_iterations=refine,
             fix_positions=fixed,
             fit_j_coupling=jx,

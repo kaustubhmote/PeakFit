@@ -86,6 +86,7 @@ def generate_default_config() -> str:
 [fitting]
 lineshape = "auto"  # auto, gaussian, lorentzian, pvoigt, sp1, sp2, no_apod, dqfcosy
 tilted = false
+include_window_functions = false
 refine_iterations = 1
 fix_positions = false
 fit_j_coupling = false

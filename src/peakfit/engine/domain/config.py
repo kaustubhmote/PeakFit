@@ -90,6 +90,10 @@ class FitConfig(BaseModel):
         default="auto",
         description="Lineshape model to use. 'auto' detects from NMRPipe apodization.",
     )
+    include_window_functions: bool = Field(
+        default=False,
+        description="Apply recorded acquisition sampling and windows to intrinsic peaks.",
+    )
     tilted: bool = Field(
         default=False,
         description="Fit rotated peaks in a two-dimensional spectral plane.",

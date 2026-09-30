@@ -5,6 +5,7 @@ Start with the root [`README.md`](../README.md) and the ready-to-run
 
 ## User Guides
 
+- [`processing-aware-fitting.md`](processing-aware-fitting.md) - fit intrinsic profiles with recorded acquisition windows.
 - [`dqfcosy.md`](dqfcosy.md) - four-lobe HN-Hα cross-peak fitting and J extraction.
 - [`outputs.md`](outputs.md) - canonical fit output files.
 - [`constraints-and-fit-steps.md`](constraints-and-fit-steps.md) - parameter

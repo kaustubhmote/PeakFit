@@ -123,3 +123,12 @@ and verifies full-spectrum versus extracted-spectrum equivalence. It also
 checks analytic derivatives and recovery of intrinsic widths and tilt through
 the optimizer. Existing tilted and DQF-COSY regression tests protect the
 unchanged fitting paths.
+
+## Frequency convolution comparison
+
+A frequency-domain FFT convolution implementation was tested on an isolated GB1
+peak. It reproduced the fitted result closely, but took about 4.7 times longer
+than the direct model in that run. The acquisition-period frequency lattice
+was much larger than the direct time grid, despite the cropped output region.
+The production evaluator remains unchanged. See the reproducible
+[convolution benchmark](../examples/07-processing-convolution/README.md).

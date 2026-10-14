@@ -1,392 +1,273 @@
-import argparse
-import sys
+"""Local browser spectrum viewer, with cached full-resolution contour geometry."""
+
+from __future__ import annotations
+
+import json
+import secrets
+import struct
+import webbrowser
+from collections import OrderedDict
+from contextlib import suppress
 from dataclasses import dataclass
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from importlib.resources import files
 from pathlib import Path
+from threading import Lock
 from typing import TYPE_CHECKING, Any, Self, cast
+from urllib.parse import parse_qs, urlsplit
 
+import contourpy
 import numpy as np
-import pandas as pd
 
+from peakfit.engine.algorithms.noise import estimate_noise
 from peakfit.io.readers.spectrum import read_spectra
-from peakfit.plot.widgets.matplotlib_backend import MatplotlibBackend
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    import pandas as pd
+
     from peakfit.engine.domain.spectrum import SpectralParameters
     from peakfit.plot.reconstruction import SpectraReconstructor
     from peakfit.shared.typing import FloatArray
 
-from peakfit.engine.algorithms.noise import estimate_noise
-from peakfit.plot.qt_core import (
-    QAction,
-    QApplication,
-    QCheckBox,
-    QHBoxLayout,
-    QLabel,
-    QMainWindow,
-    QSlider,
-    QSpinBox,
-    QSplitter,
-    QStatusBar,
-    Qt,
-    QVBoxLayout,
-    QWidget,
-    Signal,
-)
-from peakfit.shared.paths import format_path
-
-# Configuration
-CONTOUR_NUM = 25
-CONTOUR_FACTOR = 1.40
-_MIN_VIEWER_NDIM = 3
-_MIN_VIEWER_SPECTRAL_DIMS = 2
-CONTOUR_COLORS = {
-    "spectrum_exp": "C0",
-    "spectrum_sim": "C1",
-    "difference": "C2",
-}
-
-
-def _report_error(message: str) -> None:
-    """Report viewer errors without relying on the CLI UI layer."""
-    sys.stderr.write(f"{message}\n")
+_VIEWER_NDIM = 3
+_MIN_GRID_SIZE = 2
+_MIN_CONTOUR_LEVEL = 0.1
+_MAX_CONTOUR_LEVEL = 1000
+_CONTOUR_COUNT = 25
+_CONTOUR_FACTOR = 1.4
+_MIN_CONTOUR_FACTOR = 1.01
+_MAX_CONTOUR_FACTOR = 3.0
+_CACHE_BYTES = 64 * 1024 * 1024
+_NOISE_SAMPLE_SIZE = 200_000
 
 
 @dataclass
 class NMRData:
-    """Container for loaded NMR data and related metadata."""
+    """Loaded pseudo-3D data and coordinates at the first and last sample."""
 
     filename: str
     dic: dict[str, Any]
     data: FloatArray
     xlim: tuple[float, float]
     ylim: tuple[float, float]
+    x_label: str = "F3"
+    y_label: str = "F2"
 
     @classmethod
     def from_file(cls, filename: str) -> Self:
-        """Load an NMR file and return a populated NMRData instance."""
+        """Load an NMRPipe file or processed Bruker spectrum."""
         spectra = read_spectra(Path(filename))
         data, xlim, ylim = cls._process_data(spectra.data, spectra.spectral_params)
-        return cls(filename, spectra.dic, data, xlim, ylim)
+        y_axis, x_axis = spectra.spectral_params
+        return cls(
+            filename,
+            spectra.dic,
+            data,
+            xlim,
+            ylim,
+            x_axis.nucleus or x_axis.label,
+            y_axis.nucleus or y_axis.label,
+        )
 
     @staticmethod
     def _process_data(
         data: FloatArray, spectral_params: list[SpectralParameters]
     ) -> tuple[FloatArray, tuple[float, float], tuple[float, float]]:
-        if data.ndim < _MIN_VIEWER_NDIM:
-            msg = f"Unsupported data dimensionality after normalization: {data.ndim}"
-            raise ValueError(msg)
-        if len(spectral_params) < _MIN_VIEWER_SPECTRAL_DIMS:
-            msg = (
-                "Spectrum viewer requires at least two spectral dimensions, "
-                f"got {len(spectral_params)}"
-            )
-            raise ValueError(msg)
-
-        y_axis, x_axis = spectral_params[-2:]
+        if data.ndim != _VIEWER_NDIM or len(spectral_params) != _VIEWER_NDIM - 1:
+            raise ValueError("Spectrum viewer requires two spectral dimensions and a plane axis.")
+        if data.shape[0] < 1 or min(data.shape[1:]) < _MIN_GRID_SIZE:
+            raise ValueError("Spectrum viewer requires at least one plane and a 2 by 2 grid.")
+        y_axis, x_axis = spectral_params
         xlim = (float(x_axis.pts2ppm(0)), float(x_axis.pts2ppm(data.shape[-1] - 1)))
         ylim = (float(y_axis.pts2ppm(0)), float(y_axis.pts2ppm(data.shape[-2] - 1)))
         return data, xlim, ylim
 
     def unalias_y(self, y0: FloatArray) -> FloatArray:
-        """Unwrap Y-axis positions if needed, keeping values within y-limits."""
-        y_scale = (self.ylim[1] - self.ylim[0]) * (self.data.shape[1] + 1) / self.data.shape[1]
-        return cast(
-            "FloatArray", np.asarray((y0 - self.ylim[0]) % y_scale + self.ylim[0], dtype=np.float64)
-        )
+        """Wrap indirect-axis positions using the full spectral width."""
+        size = self.data.shape[-2]
+        width = (self.ylim[1] - self.ylim[0]) * size / (size - 1)
+        return cast("FloatArray", np.asarray((y0 - self.ylim[0]) % width + self.ylim[0]))
 
 
-class ControlWidget(QWidget):
-    """Control panel for adjusting view and contour levels in the spectra viewer."""
-
-    plane_changed = Signal(int)
-    contour_level_changed = Signal(int)
-    spectrum_toggled = Signal(str, bool)
-
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self._init_ui()
-
-    def _init_ui(self) -> None:
-        layout = QHBoxLayout()
-        layout.addLayout(self._create_navigation_layout())
-        layout.addLayout(self._create_slider_layout())
-        layout.addLayout(self._create_checkbox_layout())
-        self.setLayout(layout)
-
-    def _create_navigation_layout(self) -> QHBoxLayout:
-        nav_layout = QHBoxLayout()
-        self.plane_slider = QSlider(Qt.Orientation.Horizontal)
-        self.plane_spinbox = QSpinBox()
-
-        nav_layout.addWidget(QLabel("Plane:"))
-        nav_layout.addWidget(self.plane_slider)
-        nav_layout.addWidget(self.plane_spinbox)
-        return nav_layout
-
-    def _create_slider_layout(self) -> QHBoxLayout:
-        slider_layout = QHBoxLayout()
-        self.contour_slider = QSlider(Qt.Orientation.Horizontal)
-        self.contour_spinbox = QSpinBox()
-
-        slider_layout.addWidget(QLabel("Contour:"))
-        slider_layout.addWidget(self.contour_slider)
-        slider_layout.addWidget(self.contour_spinbox)
-        return slider_layout
-
-    def _create_checkbox_layout(self) -> QHBoxLayout:
-        checkbox_layout = QHBoxLayout()
-        self.checkboxes = {}
-        for key, label in [
-            ("spectrum_exp", "Exp"),
-            ("spectrum_sim", "Sim"),
-            ("difference", "Diff"),
-        ]:
-            checkbox = QCheckBox(label)
-            checkbox.setChecked(key != "difference")
-            self.checkboxes[key] = checkbox
-            checkbox_layout.addWidget(checkbox)
-        return checkbox_layout
-
-    def update_plane_label(self, current_plane: int, total_planes: int) -> None:
-        """Update plane label and slider/spinbox ranges for the UI."""
-        self.plane_spinbox.setRange(1, total_planes)
-        self.plane_slider.setRange(1, total_planes)
-        self.plane_spinbox.setValue(current_plane + 1)
-        self.plane_slider.setValue(current_plane + 1)
-
-
-class SpectraViewer(QMainWindow):
-    """Top-level Qt application window containing spectra viewer and controls."""
+class SpectrumViewer:
+    """Provide metadata and binary contours without importing Qt or Matplotlib."""
 
     def __init__(
         self,
-        data1: NMRData,
-        data2: NMRData | None,
-        plist: pd.DataFrame | None,
+        data: NMRData,
         reconstructor: SpectraReconstructor | None = None,
+        peaks: pd.DataFrame | None = None,
     ) -> None:
-        super().__init__()
-        self.data1 = data1
-        self.data2 = data2
+        self.data = data
         self.reconstructor = reconstructor
+        self.peaks = peaks
+        self._cache: OrderedDict[tuple[int, str, float, float], bytes] = OrderedDict()
+        self._cache_size = 0
+        self._simulated: tuple[int, FloatArray] | None = None
+        if reconstructor:
+            reconstructor.validate_spectrum(data.data.shape, data.xlim, data.ylim)
+        sample = data.data.ravel()[:: max(1, data.data.size // _NOISE_SAMPLE_SIZE)]
+        sample = sample[np.isfinite(sample)]
+        if not sample.size:
+            raise ValueError("Spectrum contains no finite intensity values.")
+        noise = reconstructor.state.noise if reconstructor else None
+        self.noise = float(noise) if noise and noise > 0 else float(estimate_noise(sample))
+        # A noiseless or constant spectrum still needs a positive contour base.
+        if not np.isfinite(self.noise) or self.noise <= 0:
+            self.noise = max(float(np.max(np.abs(sample))) / 100, np.finfo(float).eps)
 
-        # If a simulated spectrum is supplied, calculate the difference once.
-        if self.data2 is not None:
-            self.data_diff: FloatArray | None = self.data1.data - self.data2.data
-        else:
-            self.data_diff = None  # Calculated on fly
-
-        self.plist = plist
-        self.current_plane = 0
-        self.show_spectra = {
-            "spectrum_exp": True,
-            "spectrum_sim": True,
-            "difference": False,
+    def metadata(self) -> dict[str, Any]:
+        """Return axis, layer, and peak information for the browser controls."""
+        layers = ["experimental"]
+        if self.reconstructor:
+            layers.extend(["simulated", "residual"])
+        return {
+            "filename": Path(self.data.filename).name,
+            "shape": self.data.data.shape,
+            "xlim": self.data.xlim,
+            "ylim": self.data.ylim,
+            "x_label": self.data.x_label,
+            "y_label": self.data.y_label,
+            "noise": self.noise,
+            "layers": layers,
+            "peaks": [] if self.peaks is None else self.peaks.to_dict(orient="records"),
         }
-        self.noise_level = float(estimate_noise(self.data1.data))
-        self.contour_level = 5
 
-        self.backend = MatplotlibBackend()
+    def plane(self, index: int, layer: str) -> FloatArray:
+        """Return an experimental, simulated, or experimental-minus-simulated plane."""
+        if not 0 <= index < self.data.data.shape[0]:
+            raise ValueError("Plane index is outside the spectrum.")
+        experimental = self.data.data[index]
+        if layer == "experimental":
+            return experimental
+        if layer not in {"simulated", "residual"} or self.reconstructor is None:
+            raise ValueError("Requested layer is unavailable; supply --results for fit layers.")
+        if self._simulated is None or self._simulated[0] != index:
+            simulated = self.reconstructor.reconstruct_plane(index, experimental.shape)
+            if simulated.shape != experimental.shape or not np.all(np.isfinite(simulated)):
+                raise ValueError("Reconstructed spectrum has invalid shape or intensity values.")
+            self._simulated = (index, simulated)
+        simulated = self._simulated[1]
+        return experimental - simulated if layer == "residual" else simulated
 
-        self._init_ui()
+    def contours(
+        self, index: int, layer: str, level: float, factor: float = _CONTOUR_FACTOR
+    ) -> bytes:
+        """Encode signed contours as little-endian float32 XY pairs with NaN breaks.
 
-    def _init_ui(self) -> None:
-        self.setWindowTitle("NMR Pseudo-ND Spectra Viewer")
-        self.setGeometry(100, 100, 1000, 800)
-
-        self._create_menu_bar()
-        self._create_central_widget()
-        self._create_status_bar()
-
-        self.control_widget.contour_slider.setValue(self.contour_level)
-        self.control_widget.contour_spinbox.setValue(self.contour_level)
-
-        self.update_view(reset_view=True)
-
-    def _create_menu_bar(self) -> None:
-        menubar = self.menuBar()
-        file_menu = menubar.addMenu("File") if menubar is not None else None
-        view_menu = menubar.addMenu("View") if menubar is not None else None
-
-        exit_action = QAction("Exit", self)
-        exit_action.setShortcut("Ctrl+Q")
-
-        def _exit_slot(*_args: Any) -> None:
-            self.close()
-
-        exit_action.triggered.connect(_exit_slot)
-        if file_menu is not None:
-            file_menu.addAction(exit_action)
-
-        reset_view_action = QAction("Reset View", self)
-        reset_view_action.setShortcut("Ctrl+R")
-
-        def _reset_slot(*_args: Any) -> None:
-            self.reset_view()
-
-        reset_view_action.triggered.connect(_reset_slot)
-        if view_menu is not None:
-            view_menu.addAction(reset_view_action)
-
-    def _create_central_widget(self) -> None:
-        central_widget = QWidget()
-        self.setCentralWidget(central_widget)
-        main_layout = QVBoxLayout(central_widget)
-
-        splitter = QSplitter(Qt.Orientation.Vertical)
-
-        # Backend provides the widget
-        self.plot_widget = self.backend.get_widget()
-        self.control_widget = ControlWidget()
-
-        splitter.addWidget(self.plot_widget)
-        splitter.addWidget(self.control_widget)
-        splitter.setStretchFactor(0, 3)
-        splitter.setStretchFactor(1, 1)
-
-        main_layout.addWidget(splitter)
-
-        self._connect_signals()
-
-    def _connect_signals(self) -> None:
-        self.control_widget.plane_slider.valueChanged.connect(self._change_plane)
-        self.control_widget.plane_spinbox.valueChanged.connect(self._change_plane)
-        self.control_widget.contour_slider.valueChanged.connect(self._update_contour_level)
-        self.control_widget.contour_spinbox.valueChanged.connect(self._update_contour_level)
-        for key, checkbox in self.control_widget.checkboxes.items():
-            checkbox.stateChanged.connect(lambda _state, k=key: self._toggle_spectrum(k))
-
-    def _create_status_bar(self) -> None:
-        self.statusbar = QStatusBar()
-        self.setStatusBar(self.statusbar)
-        self.statusbar.showMessage("Ready")
-
-    def update_view(self, *, reset_view: bool = False) -> None:
-        """Refresh the plot view, optionally resetting zoom to defaults."""
-        xlim = sorted(self.data1.xlim, reverse=True)
-        ylim = sorted(self.data1.ylim, reverse=True)
-
-        # Get simulated data for current plane
-        sim_plane = None
-        diff_plane = None
-        exp_plane = self.data1.data[self.current_plane]
-
-        if self.data2 is not None:
-            sim_plane = self.data2.data[self.current_plane]
-            assert self.data_diff is not None
-            diff_plane = self.data_diff[self.current_plane]
-        elif self.reconstructor is not None:
-            # On-the-fly reconstruction
-            data_shape = self.data1.data.shape
-            grid_shape = data_shape[1:]
-            sim_plane = self.reconstructor.reconstruct_plane(self.current_plane, grid_shape)
-            diff_plane = exp_plane - sim_plane
-
-        # Delegate drawing to the plotting backend.
-        self.backend.plot(
-            exp_plane,  # Slice experimental data here to pass only 2D array
-            sim_plane,
-            diff_plane,
-            self.plist,
-            self.show_spectra,
-            self.contour_level,
-            self.noise_level,
-            self.current_plane,
-            xlim,
-            ylim,
-            reset_view=reset_view,
+        A uint32 header gives the positive point count; the remaining points
+        after that section describe negative contours. Geometry uses sample
+        indices, so browser zoom never requests another contour calculation.
+        """
+        if not np.isfinite(level) or not _MIN_CONTOUR_LEVEL <= level <= _MAX_CONTOUR_LEVEL:
+            raise ValueError("Contour level must be between 0.1 and 1000 times the noise.")
+        if not np.isfinite(factor) or not _MIN_CONTOUR_FACTOR <= factor <= _MAX_CONTOUR_FACTOR:
+            raise ValueError("Contour multiplier must be between 1.01 and 3.")
+        key = (index, layer, level, factor)
+        if key in self._cache:
+            self._cache.move_to_end(key)
+            return self._cache[key]
+        generator = contourpy.contour_generator(
+            z=np.ma.masked_invalid(self.plane(index, layer)), line_type="ChunkCombinedNan"
         )
-
-    def reset_view(self) -> None:
-        """Reset the plot view to default limits and refresh view."""
-        self.update_view(reset_view=True)
-
-    def _change_plane(self, value: int) -> None:
-        self.current_plane = value - 1  # Adjust for 0-based indexing
-        self.control_widget.update_plane_label(self.current_plane, self.data1.data.shape[0])
-        self.update_view()
-
-    def _update_contour_level(self, value: int) -> None:
-        self.contour_level = value
-        self.control_widget.contour_slider.setValue(value)
-        self.control_widget.contour_spinbox.setValue(value)
-        self.update_view()
-
-    def _toggle_spectrum(self, spectrum: str) -> None:
-        self.show_spectra[spectrum] = self.control_widget.checkboxes[spectrum].isChecked()
-        self.update_view()
-
-    def resizeEvent(self, a0: Any) -> None:  # noqa: N802
-        """Handle window resize events and adjust layouts accordingly."""
-        super().resizeEvent(a0)
-        # Assuming backend widget handles resize or we might need a notify method in backend
-        # MatplotlibBackend (QWidget) handles its own layout, but we can call a refresh if needed
+        levels = level * self.noise * factor ** np.arange(_CONTOUR_COUNT)
+        sections = []
+        separator = np.full((1, 2), np.nan, dtype="<f4").tobytes()
+        for sign in (1, -1):
+            chunks = [
+                np.asarray(points, dtype="<f4").tobytes()
+                for height in levels
+                for points in generator.lines(sign * height)[0]
+                if points is not None
+            ]
+            sections.append(separator.join(chunks))
+        payload = struct.pack("<I", len(sections[0]) // 8) + b"".join(sections)
+        if len(payload) <= _CACHE_BYTES:
+            while self._cache and self._cache_size + len(payload) > _CACHE_BYTES:
+                self._cache_size -= len(self._cache.popitem(last=False)[1])
+            self._cache[key] = payload
+            self._cache_size += len(payload)
+        return payload
 
 
-def _validate_files(args: argparse.Namespace) -> None:
-    """Validate existence of input files."""
-    for path, desc in [
-        (args.data_exp, "Experimental data"),
-        (args.data_sim, "Simulated data"),
-    ]:
-        if not Path(path).exists():
-            _report_error(f"{desc} file not found: {format_path(path)}")
-            sys.exit(1)
+def create_viewer_server(viewer: SpectrumViewer, port: int = 0) -> tuple[ThreadingHTTPServer, str]:
+    """Bind a local-only HTTP server with an unguessable session URL."""
+    prefix = f"/{secrets.token_urlsafe(24)}/"
+    contour_lock = Lock()
+    assets = {"": ("viewer.html", "text/html"), "viewer.js": ("viewer.js", "text/javascript")}
 
-    if args.peak_list and not Path(args.peak_list).exists():
-        _report_error(f"Peak list file not found: {format_path(args.peak_list)}")
-        sys.exit(1)
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            """Serve bundled assets, metadata, or a contour layer."""
+            request = urlsplit(self.path)
+            if not request.path.startswith(prefix):
+                self.send_error(404)
+                return
+            route = request.path[len(prefix) :]
+            try:
+                if route in assets:
+                    filename, content_type = assets[route]
+                    body = files("peakfit.plot").joinpath(filename).read_bytes()
+                elif route == "metadata":
+                    body = json.dumps(viewer.metadata(), allow_nan=False).encode()
+                    content_type = "application/json"
+                elif route == "contours":
+                    query = parse_qs(request.query, strict_parsing=True)
+                    with contour_lock:
+                        body = viewer.contours(
+                            int(query["plane"][0]),
+                            query["layer"][0],
+                            float(query["level"][0]),
+                            float(query.get("factor", [str(_CONTOUR_FACTOR)])[0]),
+                        )
+                    content_type = "application/octet-stream"
+                else:
+                    self.send_error(404)
+                    return
+            except (ValueError, KeyError, IndexError) as error:
+                self._reply(400, json.dumps({"error": str(error)}).encode(), "application/json")
+                return
+            except Exception as error:
+                self._reply(500, json.dumps({"error": str(error)}).encode(), "application/json")
+                return
+            self._reply(200, body, content_type)
 
+        def _reply(self, status: int, body: bytes, content_type: str) -> None:
+            self.send_response(status)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.end_headers()
+            with suppress(BrokenPipeError, ConnectionResetError):
+                self.wfile.write(body)
 
-def _load_datasets(args: argparse.Namespace) -> tuple[NMRData, NMRData, pd.DataFrame | None]:
-    """Load experimental, simulated data and peak list."""
-    try:
-        data1 = NMRData.from_file(args.data_exp)
-        data2 = NMRData.from_file(args.data_sim)
+        def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
+            """Keep request logging out of the interactive terminal."""
 
-        if data1.data.shape != data2.data.shape:
-            # We catch this here or let caller handle? Caller handles exit logic usually.
-            # But simpler to raise ValueError
-            msg = "Data shapes do not match between experimental and simulated data"
-            raise ValueError(msg)
-
-        plist = None
-        if args.peak_list:
-            plist = pd.read_table(
-                args.peak_list,
-                sep=r"\s+",
-                comment="#",
-                header=None,
-                names=("name", "y0_ppm", "x0_ppm"),
-            )
-            plist["y0_ppm"] = data1.unalias_y(plist["y0_ppm"].to_numpy().astype(np.float32))
-
-        return data1, data2, plist
-
-    except (FileNotFoundError, ValueError, OSError) as e:
-        _report_error(f"Error loading data files: {e}")
-        sys.exit(1)
-
-
-def plot_spectra(args: argparse.Namespace) -> None:
-    """Plot spectra with improved error handling for missing files."""
-    _validate_files(args)
-    data1, data2, plist = _load_datasets(args)
-
-    _app = QApplication(sys.argv)
-    viewer = SpectraViewer(data1, data2, plist)
-    viewer.show()
-
-
-def main() -> None:
-    """Run the spectra viewer command-line interface and display plots."""
-    parser = argparse.ArgumentParser(description="NMR Spectra Viewer")
-    parser.add_argument("data_exp", help="Experimental data file")
-    parser.add_argument("--sim", dest="data_sim", required=True, help="Simulated data file")
-    parser.add_argument("--peak-list", help="Peak list file")
-    args = parser.parse_args()
-    plot_spectra(args)
+    server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    return server, prefix
 
 
-if __name__ == "__main__":
-    main()
+def serve_viewer(
+    data: NMRData,
+    reconstructor: SpectraReconstructor | None = None,
+    peaks: pd.DataFrame | None = None,
+    *,
+    port: int = 0,
+    open_browser: bool = True,
+    on_ready: Callable[[str], None] | None = None,
+) -> None:
+    """Serve the viewer until Ctrl+C; optionally open the system browser."""
+    viewer = SpectrumViewer(data, reconstructor, peaks)
+    server, session_path = create_viewer_server(viewer, port)
+    with server:
+        url = f"http://127.0.0.1:{server.server_port}{session_path}"
+        if on_ready:
+            on_ready(url)
+        if open_browser:
+            webbrowser.open(url)
+        with suppress(KeyboardInterrupt):
+            server.serve_forever(poll_interval=0.2)

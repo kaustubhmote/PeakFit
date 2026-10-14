@@ -93,3 +93,22 @@ simplification.
 Documentation should be consolidated with code changes. Prefer one accurate page
 over several overlapping pages. Delete stale notes when they stop matching the
 current design.
+
+## Check the browser spectrum viewer
+
+Run the Python tests for contour geometry, HTTP delivery, reconstruction, and CLI loading:
+
+```bash
+uv run pytest tests/test_browser_spectrum_viewer.py tests/test_spectra_viewer_loading.py tests/test_tilted_lineshapes.py tests/test_dqfcosy.py
+```
+
+With Node.js available, run the browser control tests without npm dependencies:
+
+```bash
+node tests/browser_viewer.test.mjs
+```
+
+These tests execute the shipped JavaScript with a small DOM substitute. They check
+Ctrl-scroll, Shift-scroll, plain-wheel zoom, contour bounds, and request coalescing.
+For visual checks, launch `peakfit plot spectrum` with a real fit and verify layer
+toggles, signed residuals, peak focus, plane changes, drag-to-pan, and wheel zoom.

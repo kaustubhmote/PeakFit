@@ -198,8 +198,39 @@ peakfit plot spectrum --spectrum data/pseudo3d.ft2 --results "$LATEST_RUN"
 peakfit plot spectrum --spectrum /data/sample/10/pdata/1/2rr --results "$LATEST_RUN"
 ```
 
-The spectrum viewer accepts the same NMRPipe files and processed Bruker paths as
-`peakfit fit`.
+The spectrum viewer opens in your browser and accepts the same NMRPipe files
+and processed Bruker paths as `peakfit fit`. Keep the command running and press
+Ctrl+C in the terminal to stop it. No internet connection is needed.
+
+- Scroll over the plot to zoom around the pointer. Drag to pan.
+- Hold Ctrl while scrolling to change the base contour level.
+- Hold Shift while scrolling to change the multiplier between successive contours.
+  Wheel up increases either value; wheel down decreases it. Both values are also editable.
+- Toggle **Experimental**, **Simulated**, and **Residual** independently to compare
+  the data, the fitted model, and their signed difference, experimental minus simulated.
+- Choose a plane or focus a peak. Double-click or select **Reset view** to reset zoom.
+- Positive contours are solid. Negative contours are dashed in the same layer color.
+
+The base defaults to five times the noise, with 25 levels per sign and a multiplier
+of 1.4. All layers share the same levels. Simulated and residual layers require
+`--results` with `summary/fit.json` and `metadata/fitting_state.pkl`. The viewer
+checks that the spectrum grid and plane count match the fit. It evaluates final
+saved parameters and amplitudes without clipping peak tails. For joint quadrature
+fits, the viewer currently displays the real `rr` plane.
+
+For an SSH session, start the viewer on the remote machine with a fixed local port:
+
+```bash
+peakfit plot spectrum -s spectrum.ft2 -r Fits/run --no-browser --port 8765
+```
+
+Forward that port with `ssh -L 8765:127.0.0.1:8765 motelab`, then open the full URL
+printed by PeakFit in your local browser. The server listens only on loopback.
+
+The browser viewer replaces the Qt spectrum window. Existing `peakfit plot spectrum`
+commands use the browser automatically. The old internal `SpectraViewer` Qt class
+and standalone `python -m peakfit.plot.spectra_viewer` entry point are removed;
+use `peakfit plot spectrum`. PDF profile and MCMC plotting commands are unchanged.
 
 CEST and CPMG plots are generated from `tables/intensities.csv`. CEST preserves
 signed normalized intensities. CPMG computes `R2eff` from `log(I/I0)`, so only

@@ -59,6 +59,30 @@ fit orchestration, uncertainty analysis, plotting, and output generation.
 5. `mcmc` and `plot` run post-fit workflows from canonical fit outputs.
 6. `ui` renders terminal output where the CLI needs it.
 
+## Browser spectrum viewer
+
+`plot.spectra_viewer` loads two spectral dimensions plus a plane axis through the
+shared spectrum reader. A local HTTP server serves bundled HTML and JavaScript;
+there is no JavaScript build step, external service, or CDN. ContourPy extracts
+positive and negative full-resolution contour paths. The server sends little-endian
+float32 coordinates with NaN path breaks. Canvas caches paths and transforms them
+for zoom and pan without further numerical work or network requests. Both sides
+bound their contour caches to a 64 MiB budget; the browser estimates native path
+memory. The server retains only one simulated plane at a time.
+
+`plot.reconstruction` uses the final nonlinear parameters and retained amplitudes
+from `summary/fit.json`, matched by cluster ID and peak order to geometry in
+`metadata/fitting_state.pkl`. It evaluates complete profiles in point blocks,
+including tails and tilted peaks. It excludes unusable outcomes and checks the
+input ppm grid and plane count before serving. The residual is experimental minus
+simulated, and all layers share signed contour levels. The current viewer supports
+the real `rr` plane of joint quadrature fits.
+
+The CLI imports Matplotlib output generators only for PDF commands. The browser
+viewer imports neither Matplotlib nor Qt. The experimental automatic picker still
+uses its existing Qt and Matplotlib widgets, and PDF output still uses Matplotlib.
+These dependencies therefore remain in the package.
+
 ## Boundaries
 
 - `engine` should stay free of Typer, Rich, Qt, and filesystem side effects.

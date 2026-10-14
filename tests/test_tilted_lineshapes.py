@@ -612,6 +612,23 @@ def test_tilt_survives_finalization_outputs_and_full_grid_simulation(tmp_path: P
     payload = json.loads(written["summary_fit"].read_text())
     json_names = {parameter["name"] for parameter in payload["final_nonlinear_parameters"]}
     assert "P1.F2-F3.tilt" in json_names
+    reconstructor = SpectraReconstructor(tmp_path)
+    reconstructed = reconstructor.reconstruct_plane(0, (9, 11))
+    np.testing.assert_allclose(reconstructed, simulated[0])
+    y_axis, x_axis = spectra.spectral_params
+    xlim = (float(x_axis.pts2ppm(0)), float(x_axis.pts2ppm(10)))
+    ylim = (float(y_axis.pts2ppm(0)), float(y_axis.pts2ppm(8)))
+    reconstructor.validate_spectrum(spectra.data.shape, xlim, ylim)
+    with pytest.raises(ValueError, match="different plane counts"):
+        reconstructor.validate_spectrum((2, 9, 11), xlim, ylim)
+    with pytest.raises(ValueError, match="different ppm grids"):
+        reconstructor.validate_spectrum(spectra.data.shape, (xlim[0] + 0.1, xlim[1] + 0.1), ylim)
+    # Persisted observations are not a second source of fitted amplitudes.
+    state.clusters[0].data *= 7
+    save_state(state_path, state)
+    np.testing.assert_allclose(
+        SpectraReconstructor(tmp_path).reconstruct_plane(0, (9, 11)), simulated[0]
+    )
     with written["parameters"].open(newline="") as handle:
         csv_names = {row["parameter_name"] for row in csv.DictReader(handle)}
     assert "P1.F2-F3.tilt" in csv_names
@@ -678,3 +695,32 @@ def test_varpro_recovers_tilt_from_synthetic_peak(lineshape: str) -> None:
 
     assert result.success
     assert result.params["P1.F2-F3.tilt"].value == pytest.approx(28.0, abs=0.02)
+
+
+def test_spectrum_reconstruction_retains_lorentzian_tails(tmp_path: Path) -> None:
+    spectra = make_2d_spectra(101, 101)
+    peak = Peak(
+        name="P1",
+        positions=np.array([120.0, 8.0]),
+        shapes=create_shapes(spectra, FitConfig(), "P1", [120.0, 8.0], ["lorentzian"] * 2),
+    )
+    peak.set_cluster_id(1)
+    params = peak.create_params()
+    params["P1.F2.lw"].value = 0.2
+    params["P1.F3.lw"].value = 0.2
+    yy, xx = np.indices((101, 101))
+    cluster = Cluster(1, [peak], [yy.ravel(), xx.ravel()], np.zeros((101 * 101, 1)))
+    state = FittingState(
+        clusters=[cluster],
+        params=FitParameters.from_parameters(params, [peak]),
+        scalar_params=params,
+    )
+    reconstructor = object.__new__(SpectraReconstructor)
+    reconstructor.results_dir = tmp_path
+    reconstructor._state = state
+    reconstructor._cluster_all = cluster
+    reconstructor._amplitudes = np.array([[2.0]])
+    actual = reconstructor.reconstruct_plane(0, (101, 101))
+    expected = (2 * cluster.evaluate(params)[0]).reshape(101, 101)
+    assert expected[0, 0] > 0
+    np.testing.assert_allclose(actual, expected, rtol=1e-12, atol=0)

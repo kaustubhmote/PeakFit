@@ -405,6 +405,7 @@ name = "peakfit"
 version = "2025.11.0"
 source = { editable = "." }
 dependencies = [
+    { name = "contourpy" },
     { name = "emcee" },
     { name = "h5py" },
     { name = "matplotlib" },
@@ -434,6 +435,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "contourpy", specifier = ">=1.3.3" },
     { name = "emcee", specifier = ">=3.1.6" },
     { name = "h5py", specifier = ">=3.15.1" },
     { name = "matplotlib", specifier = ">=3.10.8" },

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path  # noqa: TC003 - needed at runtime for Typer
 from typing import TYPE_CHECKING, Annotated
 
@@ -11,13 +10,6 @@ import pandas as pd
 import typer
 
 from peakfit.io.readers.results import ResultsLoader
-from peakfit.plot.outputs import (
-    PlotOutput,
-    generate_cest_plots,
-    generate_cpmg_plots,
-    generate_intensity_plots,
-    generate_mcmc_diagnostics,
-)
 from peakfit.plot.reconstruction import SpectraReconstructor
 from peakfit.ui.branding import show_command_summary
 from peakfit.ui.console import Verbosity, display_path, set_verbosity
@@ -27,6 +19,8 @@ from peakfit.ui.reporter import ConsoleReporter
 if TYPE_CHECKING:
     from collections.abc import Callable
     from typing import Any
+
+    from peakfit.plot.outputs import PlotOutput
 
 
 _MIN_PEAK_POSITIONS_FOR_2D = 2
@@ -106,6 +100,8 @@ def plot_cest(
     ] = False,
 ) -> None:
     """Plot CEST profiles as normalized intensity vs B1 offset."""
+    from peakfit.plot.outputs import generate_cest_plots  # noqa: PLC0415
+
     output_path = output or (results / "cest_profiles.pdf")
     _configure_plot_ui(
         verbose,
@@ -159,6 +155,14 @@ def plot_spectrum(
             "--results", "-r", help="Results directory (optional)", exists=True, resolve_path=True
         ),
     ] = None,
+    port: Annotated[
+        int,
+        typer.Option("--port", help="Local viewer port; 0 chooses a free port", min=0, max=65535),
+    ] = 0,
+    browser: Annotated[
+        bool,
+        typer.Option("--browser/--no-browser", help="Open the system browser automatically"),
+    ] = True,
     verbose: Annotated[
         bool,
         typer.Option("--verbose", "-v", help="Verbose output"),
@@ -166,8 +170,11 @@ def plot_spectrum(
 ) -> None:
     """Interactive spectrum viewer.
 
-    Opens a Qt-based viewer for exploring NMR spectra with optional
-    overlay of fitted peaks from results.
+    Accepts an NMRPipe file or processed Bruker spectrum.
+
+    Opens a local browser viewer with mouse-wheel zoom and drag-to-pan.
+    Supply results to compare experimental, simulated, and residual contours.
+    Keep the command running; press Ctrl+C to stop the viewer.
 
     Examples:
         peakfit plot spectrum -s data/spectrum.ft2
@@ -187,20 +194,26 @@ def plot_spectrum(
             )
         ],
     )
-    data_exp = _load_spectrum(spectrum)
-    reconstructor = _init_reconstructor(results)
-    plist = _extract_peaks(reconstructor, data_exp)
-
     try:
-        from peakfit.plot.qt_core import QApplication  # noqa: PLC0415
-        from peakfit.plot.spectra_viewer import SpectraViewer  # noqa: PLC0415
+        from peakfit.plot.spectra_viewer import serve_viewer  # noqa: PLC0415
 
-        app = QApplication.instance() or QApplication(sys.argv)
-        viewer = SpectraViewer(data1=data_exp, data2=None, plist=plist, reconstructor=reconstructor)
-        viewer.show()
-        app.exec()
+        data_exp = _load_spectrum(spectrum)
+        reconstructor = _init_reconstructor(results)
+        plist = _extract_peaks(reconstructor, data_exp)
+
+        def ready(url: str) -> None:
+            success(f"Spectrum viewer: {url}")
+            success(
+                "Scroll to zoom; Ctrl-scroll for base, Shift-scroll for multiplier. Ctrl+C to stop."
+            )
+
+        serve_viewer(
+            data_exp, reconstructor, plist, port=port, open_browser=browser, on_ready=ready
+        )
+    except typer.Exit:
+        raise
     except Exception as e:
-        show_error_with_details("launching viewer", e)
+        show_error_with_details("launching browser viewer", e)
         raise typer.Exit(1) from e
 
 
@@ -229,6 +242,8 @@ def plot_intensity(
         peakfit plot intensity Fits/20240101_120000/
         peakfit plot intensity results/ -o profiles.pdf
     """
+    from peakfit.plot.outputs import generate_intensity_plots  # noqa: PLC0415
+
     output_path = output or (results / "intensity_profiles.pdf")
     _configure_plot_ui(
         verbose,
@@ -280,6 +295,8 @@ def plot_cpmg(
     ] = False,
 ) -> None:
     """Plot CPMG relaxation dispersion as R2eff vs nuCPMG."""
+    from peakfit.plot.outputs import generate_cpmg_plots  # noqa: PLC0415
+
     output_path = output or (results / "cpmg_profiles.pdf")
     _configure_plot_ui(
         verbose,
@@ -339,6 +356,8 @@ def plot_mcmc(
         peakfit plot mcmc Fits/20240101_120000/
         peakfit plot mcmc results/ --burn-in 100
     """
+    from peakfit.plot.outputs import generate_mcmc_diagnostics  # noqa: PLC0415
+
     output_path = output or (results / "mcmc_diagnostics.pdf")
     _configure_plot_ui(
         verbose,

@@ -9,7 +9,7 @@ from typer.testing import CliRunner
 from peakfit.cli.app import app
 from peakfit.cli.commands import plot as plot_command
 from peakfit.io.readers import spectrum as spectrum_reader
-from peakfit.plot import qt_core, spectra_viewer
+from peakfit.plot import spectra_viewer
 from peakfit.plot.spectra_viewer import NMRData
 
 if TYPE_CHECKING:
@@ -74,36 +74,34 @@ def test_plot_spectrum_command_loads_bruker_2rr_with_results(
     def _init_reconstructor(path: Path | None) -> None:
         captured["results"] = path
 
-    class FakeApplication:
-        @classmethod
-        def instance(cls) -> None:
-            return None
-
-        def __init__(self, _args: list[str]) -> None:
-            pass
-
-        def exec(self) -> None:
-            captured["executed"] = True
-
-    class FakeViewer:
-        def __init__(self, **kwargs: object) -> None:
-            captured["data"] = kwargs["data1"]
-
-        def show(self) -> None:
-            captured["shown"] = True
+    def fake_serve(data, _reconstructor, _peaks, **kwargs):
+        captured["data"] = data
+        captured["browser"] = kwargs["open_browser"]
+        captured["port"] = kwargs["port"]
+        kwargs["on_ready"]("http://127.0.0.1:8765/session/")
 
     monkeypatch.setattr(plot_command, "_init_reconstructor", _init_reconstructor)
-    monkeypatch.setattr(qt_core, "QApplication", FakeApplication)
-    monkeypatch.setattr(spectra_viewer, "SpectraViewer", FakeViewer)
+    monkeypatch.setattr(spectra_viewer, "serve_viewer", fake_serve)
 
     result = CliRunner().invoke(
         app,
-        ["plot", "spectrum", "--spectrum", str(binary), "--results", str(results)],
+        [
+            "plot",
+            "spectrum",
+            "--spectrum",
+            str(binary),
+            "--results",
+            str(results),
+            "--no-browser",
+            "--port",
+            "8765",
+        ],
     )
 
     assert result.exit_code == 0, result.output
     assert read_paths == [str(binary.parent)]
     assert captured["results"] == results
     assert isinstance(captured["data"], NMRData)
-    assert captured["shown"] is True
-    assert captured["executed"] is True
+    assert captured["browser"] is False
+    assert captured["port"] == 8765
+    assert "http://127.0.0.1:8765/session/" in result.output

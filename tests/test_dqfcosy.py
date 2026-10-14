@@ -26,6 +26,7 @@ from peakfit.io.readers import spectrum as spectrum_reader
 from peakfit.io.state import load_state, save_state
 from peakfit.io.writers.config import WriterConfig
 from peakfit.io.writers.orchestrator import write_fit_outputs
+from peakfit.plot.reconstruction import SpectraReconstructor
 from peakfit.shared.exceptions import DataIOError
 
 
@@ -457,6 +458,10 @@ def test_joint_quadrature_pipeline_state_output_and_simulation(tmp_path, monkeyp
     simulated = simulate_final_outcome(run.outcome, run.simulation_snapshot, spectra.data)
     assert simulated is not None
     np.testing.assert_allclose(simulated, spectra.data, atol=1e-5)
+    reconstructor = SpectraReconstructor(run.output_dir)
+    np.testing.assert_allclose(
+        reconstructor.reconstruct_plane(0, spectra.data.shape[1:]), simulated[0], atol=1e-5
+    )
     with np.load(run.output_dir / "simulated_quadrature.npz") as saved:
         assert set(saved.files) == set(spectra.quadrature_components)
         np.testing.assert_allclose(saved["ri"], spectra.data[1], atol=1e-5)

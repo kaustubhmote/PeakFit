@@ -6,6 +6,7 @@ const plotArea = document.querySelector('#plot-area');
 const planeInput = document.querySelector('#plane');
 const levelInput = document.querySelector('#level');
 const factorInput = document.querySelector('#factor');
+const contourFactors = [...factorInput.options].map(option => Number(option.value)).sort((a, b) => a - b);
 const aspectInput = document.querySelector('#aspect');
 const widthInput = document.querySelector('#plot-width');
 const status = document.querySelector('#status');
@@ -16,7 +17,7 @@ const inflight = new Map();
 const cacheLimit = 64 * 1024 * 1024;
 let cacheBytes = 0;
 let meta, view, current = new Map(), generation = 0, pending = false, drag = null;
-let width = 1, height = 1, contourTimer;
+let width = 1, height = 1, contourTimer, contourLadder, contourWheel = 0, factorWheel = 0;
 const margin = {left: 76, right: 24, top: 22, bottom: 58};
 
 function message(text, error = false) {
@@ -34,64 +35,85 @@ async function get(url) {
 }
 
 function paths(buffer) {
-    const positiveCount = new DataView(buffer).getUint32(0, true);
-    // DataView makes decoding independent of the browser machine's byte order.
-    const values = new DataView(buffer, 4);
-    const result = [new Path2D(), new Path2D()];
-    let start = true;
-    for (let i = 0; i < values.byteLength / 8; i++) {
-        if (i === positiveCount) start = true;
-        const x = values.getFloat32(i * 8, true), y = values.getFloat32(i * 8 + 4, true);
-        if (!Number.isFinite(x) || !Number.isFinite(y)) { start = true; continue; }
-        const path = result[i < positiveCount ? 0 : 1];
-        if (start) path.moveTo(x, y); else path.lineTo(x, y);
-        start = false;
+    const data = new DataView(buffer), count = data.getUint32(0, true);
+    const result = new Map();
+    let offset = 4;
+    for (let level = 0; level < count; level++) {
+        const height = data.getFloat64(offset, true);
+        const counts = [data.getUint32(offset + 8, true), data.getUint32(offset + 12, true)];
+        offset += 16;
+        const signedPaths = counts.map(count => {
+            const path = new Path2D();
+            let start = true;
+            for (let i = 0; i < count; i++, offset += 8) {
+                const x = data.getFloat32(offset, true), y = data.getFloat32(offset + 4, true);
+                if (!Number.isFinite(x) || !Number.isFinite(y)) { start = true; continue; }
+                if (start) path.moveTo(x, y); else path.lineTo(x, y);
+                start = false;
+            }
+            return path;
+        });
+        // Allow for the native Path2D copy as well as the transferred coordinates.
+        result.set(height, {result: signedPaths, bytes: (16 + (counts[0] + counts[1]) * 8) * 4});
     }
     return result;
 }
 
-async function layerPaths(plane, layer, level, factor) {
-    const key = `${plane}/${layer}/${level}/${factor}`;
-    if (cache.has(key)) {
-        const entry = cache.get(key);
-        cache.delete(key);
-        cache.set(key, entry);
-        return entry.result;
+function contourLevels() {
+    const base = Number(levelInput.value), factor = Number(factorInput.value);
+    if (!contourLadder || contourLadder.base !== base || contourLadder.factor !== factor) {
+        contourLadder = {anchor: base, base, factor, offset: 0};
+        contourWheel = 0;
     }
-    if (inflight.has(key)) return inflight.get(key);
-    const promise = (async () => {
-        const response = await get(`contours?${new URLSearchParams({plane, layer, level, factor})}`);
-        const buffer = await response.arrayBuffer();
-        const result = paths(buffer);
-        // Budget includes a conservative allowance for the native Path2D copy.
-        const bytes = buffer.byteLength * 4;
-        if (bytes <= cacheLimit) {
-            while (cacheBytes + bytes > cacheLimit && cache.size) {
-                const oldest = cache.keys().next().value;
-                cacheBytes -= cache.get(oldest).bytes;
-                cache.delete(oldest);
+    return Array.from({length: meta.contour_count}, (_, i) =>
+        Number((contourLadder.anchor * factor ** (contourLadder.offset + i)).toPrecision(12)));
+}
+
+async function layerPaths(plane, layer, levels) {
+    const key = height => `${plane}/${layer}/${height}`;
+    const missing = levels.filter(height => !cache.has(key(height)) && !inflight.has(key(height)));
+    if (missing.length) {
+        const batch = (async () => {
+            const response = await get(`contours?${new URLSearchParams({plane, layer, levels: missing.join(',')})}`);
+            const decoded = paths(await response.arrayBuffer());
+            for (const height of missing) {
+                const entry = decoded.get(height);
+                if (!entry) throw new Error('Contour response is missing a requested height');
+                if (entry.bytes > cacheLimit) continue;
+                while (cacheBytes + entry.bytes > cacheLimit && cache.size) {
+                    const oldest = cache.keys().next().value;
+                    cacheBytes -= cache.get(oldest).bytes;
+                    cache.delete(oldest);
+                }
+                cache.set(key(height), entry);
+                cacheBytes += entry.bytes;
             }
-            cache.set(key, {result, bytes});
-            cacheBytes += bytes;
+            return decoded;
+        })();
+        for (const height of missing) {
+            const promise = batch.then(decoded => decoded.get(height).result)
+                .finally(() => inflight.delete(key(height)));
+            inflight.set(key(height), promise);
         }
-        return result;
-    })().finally(() => inflight.delete(key));
-    inflight.set(key, promise);
-    return promise;
+    }
+    return Promise.all(levels.map(height => {
+        const entry = cache.get(key(height));
+        if (!entry) return inflight.get(key(height));
+        cache.delete(key(height)); cache.set(key(height), entry);
+        return entry.result;
+    }));
 }
 
 async function load() {
     if (!meta || !planeInput.checkValidity() || !levelInput.checkValidity() || !factorInput.checkValidity()) return;
     const revision = ++generation;
-    const plane = Number(planeInput.value) - 1, level = Number(levelInput.value),
-          factor = Number(factorInput.value);
-    current = new Map();
-    redraw();
+    const plane = Number(planeInput.value) - 1, level = Number(levelInput.value);
+    const levels = contourLevels();
     message(`Loading plane ${plane + 1}…`);
     try {
         const enabled = checks.filter(check => check.checked && !check.disabled);
         const layers = await Promise.all(enabled.map(async check =>
-            [check.value, await layerPaths(plane, check.value, level, factor)]));
+            [check.value, await layerPaths(plane, check.value, levels)]));
         if (revision !== generation) return;
         current = new Map(layers);
         message(`Plane ${plane + 1} of ${meta.shape[0]} · Base ${(level * meta.noise).toPrecision(4)}`);
@@ -147,9 +169,9 @@ function draw() {
     ctx.save();
     ctx.beginPath(); ctx.rect(left, top, w, h); ctx.clip();
     ctx.lineWidth = 1;
-    for (const [layer, signedPaths] of current) {
+    for (const [layer, levels] of current) {
         ctx.strokeStyle = colors[layer];
-        signedPaths.forEach((path, sign) => {
+        for (const signedPaths of levels) signedPaths.forEach((path, sign) => {
             // Transform the geometry, preserving a uniform one-pixel stroke.
             const visible = new Path2D();
             visible.addPath(path, transform);
@@ -218,11 +240,25 @@ canvas.addEventListener('wheel', event => {
     const delta = wheelDelta * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? height : 1);
     if (event.ctrlKey || event.shiftKey) {
         if (event.ctrlKey) {
-            const level = Number(levelInput.value) * Math.exp(-delta * 0.002);
-            levelInput.value = Number(Math.max(0.1, Math.min(1000, level)).toPrecision(4));
+            if (!levelInput.checkValidity() || !factorInput.checkValidity()) return;
+            contourLevels();
+            contourWheel -= delta;
+            const steps = Math.trunc(contourWheel / 100);
+            if (!steps) return;
+            contourWheel -= steps * 100;
+            const logFactor = Math.log(contourLadder.factor);
+            const minimum = Math.ceil(Math.log(0.1 / contourLadder.anchor) / logFactor - 1e-10);
+            const maximum = Math.floor(Math.log(1000 / contourLadder.anchor) / logFactor + 1e-10);
+            contourLadder.offset = Math.max(minimum, Math.min(maximum, contourLadder.offset + steps));
+            contourLadder.base = Number((contourLadder.anchor * contourLadder.factor ** contourLadder.offset).toPrecision(12));
+            levelInput.value = contourLadder.base;
         } else {
-            const multiplier = Number(factorInput.value) - delta * 0.0005;
-            factorInput.value = Number(Math.max(1.01, Math.min(3, multiplier)).toFixed(3));
+            factorWheel -= delta;
+            const steps = Math.trunc(factorWheel / 100);
+            if (!steps) return;
+            factorWheel -= steps * 100;
+            const index = contourFactors.indexOf(Number(factorInput.value));
+            factorInput.value = contourFactors[Math.max(0, Math.min(contourFactors.length - 1, index + steps))];
         }
         // A wheel burst changes controls immediately and extracts contours once it settles.
         ++generation;
@@ -296,7 +332,9 @@ function resizeCanvas() {
     const cssWidth = `${width + 2}px`, cssHeight = `${height}px`;
     if (plot.style.width !== cssWidth) plot.style.width = cssWidth;
     if (canvas.style.height !== cssHeight) canvas.style.height = cssHeight;
-    canvas.width = Math.round(width * ratio); canvas.height = Math.round(height * ratio);
+    const pixelWidth = Math.round(width * ratio), pixelHeight = Math.round(height * ratio);
+    if (canvas.width !== pixelWidth) canvas.width = pixelWidth;
+    if (canvas.height !== pixelHeight) canvas.height = pixelHeight;
     redraw();
 }
 new ResizeObserver(resizeCanvas).observe(plotArea);

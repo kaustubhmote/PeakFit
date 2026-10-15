@@ -110,6 +110,8 @@ node tests/browser_viewer.test.mjs
 
 These tests execute the shipped JavaScript with a small DOM substitute. They check
 Ctrl-scroll, Shift-scroll, plain-wheel zoom, contour bounds, request coalescing,
-plot sizing, and pointer coordinates after page scrolling.
+plot sizing, pointer coordinates after page scrolling, and per-height reuse.
+Delayed, failed, and out-of-order contour responses must preserve the last
+complete spectrum without an empty frame.
 For visual checks, launch `peakfit plot spectrum` with a real fit and verify layer
 toggles, signed residuals, peak focus, plane changes, drag-to-pan, and wheel zoom.

@@ -36,7 +36,10 @@ footer { min-height: 48px; padding: 10px 24px; display: flex; align-items: cente
 <div class="controls">
 <label>Plane <input id="plane" aria-label="Plane" type="number" required min="1" value="1"><span id="plane-count"></span></label>
 <label>Base contour <input id="level" aria-label="Base contour" type="number" required min="0.1" max="1000" step="any" value="5"> × noise</label>
-<label>Multiplier <input id="factor" aria-label="Contour multiplier" type="number" required min="1.01" max="3" step="any" value="1.4"></label>
+<label>Multiplier <select id="factor" aria-label="Contour multiplier">
+<option value="2">2.0</option><option value="1.8">1.8</option><option value="1.6">1.6</option>
+<option value="1.4" selected>1.4</option><option value="1.3">1.3</option><option value="1.2">1.2</option>
+</select></label>
 <fieldset id="layers"><legend>Spectrum layers</legend>
 <label class="experimental"><input type="checkbox" value="experimental" checked>Experimental</label>
 <label class="simulated"><input type="checkbox" value="simulated" checked>Simulated</label>

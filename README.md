@@ -203,9 +203,12 @@ and processed Bruker paths as `peakfit fit`. Keep the command running and press
 Ctrl+C in the terminal to stop it. No internet connection is needed.
 
 - Scroll over the plot to zoom around the pointer. Drag to pan.
-- Hold Ctrl while scrolling to change the base contour level.
-- Hold Shift while scrolling to change the multiplier between successive contours.
-  Wheel up increases either value; wheel down decreases it. Both values are also editable.
+- Hold Ctrl while scrolling to step the base contour level up or down by the
+  current multiplier. Existing contour heights stay fixed; each step removes
+  one height and adds the next, reusing the other 24.
+- Hold Shift while scrolling to choose the multiplier between successive contours
+  from `1.2`, `1.3`, `1.4`, `1.6`, `1.8`, and `2.0`. Wheel up increases the value;
+  wheel down decreases it. You can also edit the base or select a multiplier directly.
 - Toggle **Experimental**, **Simulated**, and **Residual** independently to compare
   the data, the fitted model, and their signed difference, experimental minus simulated.
 - Set **Width (%)** to resize the plot relative to the available page width.
@@ -219,7 +222,10 @@ Ctrl+C in the terminal to stop it. No internet connection is needed.
 - Positive contours are solid. Negative contours are dashed in the same layer color.
 
 The base defaults to five times the noise, with 25 levels per sign and a multiplier
-of 1.4. All layers share the same levels. Simulated and residual layers require
+of 1.4. All layers share the same levels. The previous spectrum stays visible
+while new heights load, including after manual base edits and multiplier changes.
+Changing the multiplier or entering an arbitrary base can change every height;
+only heights already calculated are reused. Simulated and residual layers require
 `--results` with `summary/fit.json` and `metadata/fitting_state.pkl`. The viewer
 checks that the spectrum grid and plane count match the fit. It evaluates final
 saved parameters and amplitudes without clipping peak tails. For joint quadrature

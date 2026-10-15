@@ -65,8 +65,15 @@ fit orchestration, uncertainty analysis, plotting, and output generation.
 shared spectrum reader. A local HTTP server serves bundled HTML and JavaScript;
 there is no JavaScript build step, external service, or CDN. ContourPy extracts
 positive and negative full-resolution contour paths. The server sends little-endian
-float32 coordinates with NaN path breaks. Canvas caches paths and transforms them
-for zoom and pan without further numerical work or network requests. A shared
+float32 coordinates with NaN path breaks, batched by explicitly requested
+contour height. Server and browser caches identify each height by plane, layer,
+and its value in noise units. The browser requests only missing heights.
+Ctrl-scroll advances through a geometric ladder, preserving the overlapping
+24 of 25 heights and their Path2D objects. Shift-scroll selects one of six
+multiplier presets; revisiting a preset reuses cached heights. Manual base edits or multiplier
+changes may require new heights. The last complete spectrum remains visible
+until all requested layers are ready; stale responses cannot replace a newer
+view. Canvas transforms cached paths for zoom and pan without network requests. A shared
 plot rectangle defaults to a full-width square. Two decimal inputs control
 width as a percentage of available page width and aspect ratio as width divided
 by height. A stable page wrapper supplies the reference width, so enlarged plots

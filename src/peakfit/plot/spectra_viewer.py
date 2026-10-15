@@ -23,7 +23,7 @@ from peakfit.engine.algorithms.noise import estimate_noise
 from peakfit.io.readers.spectrum import read_spectra
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
 
     import pandas as pd
 
@@ -33,12 +33,7 @@ if TYPE_CHECKING:
 
 _VIEWER_NDIM = 3
 _MIN_GRID_SIZE = 2
-_MIN_CONTOUR_LEVEL = 0.1
-_MAX_CONTOUR_LEVEL = 1000
 _CONTOUR_COUNT = 25
-_CONTOUR_FACTOR = 1.4
-_MIN_CONTOUR_FACTOR = 1.01
-_MAX_CONTOUR_FACTOR = 3.0
 _CACHE_BYTES = 64 * 1024 * 1024
 _NOISE_SAMPLE_SIZE = 200_000
 
@@ -103,7 +98,7 @@ class SpectrumViewer:
         self.data = data
         self.reconstructor = reconstructor
         self.peaks = peaks
-        self._cache: OrderedDict[tuple[int, str, float, float], bytes] = OrderedDict()
+        self._cache: OrderedDict[tuple[int, str, float], bytes] = OrderedDict()
         self._cache_size = 0
         self._simulated: tuple[int, FloatArray] | None = None
         if reconstructor:
@@ -131,6 +126,7 @@ class SpectrumViewer:
             "x_label": self.data.x_label,
             "y_label": self.data.y_label,
             "noise": self.noise,
+            "contour_count": _CONTOUR_COUNT,
             "layers": layers,
             "peaks": [] if self.peaks is None else self.peaks.to_dict(orient="records"),
         }
@@ -152,44 +148,50 @@ class SpectrumViewer:
         simulated = self._simulated[1]
         return experimental - simulated if layer == "residual" else simulated
 
-    def contours(
-        self, index: int, layer: str, level: float, factor: float = _CONTOUR_FACTOR
-    ) -> bytes:
-        """Encode signed contours as little-endian float32 XY pairs with NaN breaks.
+    def contours(self, index: int, layer: str, levels: Sequence[float]) -> bytes:
+        """Return cached signed paths for explicitly requested heights in noise units.
 
-        A uint32 header gives the positive point count; the remaining points
-        after that section describe negative contours. Geometry uses sample
-        indices, so browser zoom never requests another contour calculation.
+        The batch starts with a uint32 level count. Each level has a float64
+        height, uint32 positive and negative point counts, then float32 XY pairs
+        with NaN path breaks. Heights are cached independently of the level set.
         """
-        if not np.isfinite(level) or not _MIN_CONTOUR_LEVEL <= level <= _MAX_CONTOUR_LEVEL:
-            raise ValueError("Contour level must be between 0.1 and 1000 times the noise.")
-        if not np.isfinite(factor) or not _MIN_CONTOUR_FACTOR <= factor <= _MAX_CONTOUR_FACTOR:
-            raise ValueError("Contour multiplier must be between 1.01 and 3.")
-        key = (index, layer, level, factor)
-        if key in self._cache:
-            self._cache.move_to_end(key)
-            return self._cache[key]
-        generator = contourpy.contour_generator(
-            z=np.ma.masked_invalid(self.plane(index, layer)), line_type="ChunkCombinedNan"
-        )
-        levels = level * self.noise * factor ** np.arange(_CONTOUR_COUNT)
-        sections = []
+        if not 1 <= len(levels) <= _CONTOUR_COUNT or any(
+            not np.isfinite(level) or level <= 0 for level in levels
+        ):
+            raise ValueError("Request between 1 and 25 positive, finite contour heights.")
+        if len(set(levels)) != len(levels):
+            raise ValueError("Contour heights must be unique.")
+        generator = None
+        records = []
         separator = np.full((1, 2), np.nan, dtype="<f4").tobytes()
-        for sign in (1, -1):
-            chunks = [
-                np.asarray(points, dtype="<f4").tobytes()
-                for height in levels
-                for points in generator.lines(sign * height)[0]
-                if points is not None
-            ]
-            sections.append(separator.join(chunks))
-        payload = struct.pack("<I", len(sections[0]) // 8) + b"".join(sections)
-        if len(payload) <= _CACHE_BYTES:
-            while self._cache and self._cache_size + len(payload) > _CACHE_BYTES:
-                self._cache_size -= len(self._cache.popitem(last=False)[1])
-            self._cache[key] = payload
-            self._cache_size += len(payload)
-        return payload
+        for level in levels:
+            key = (index, layer, level)
+            if key in self._cache:
+                self._cache.move_to_end(key)
+                payload = self._cache[key]
+            else:
+                if generator is None:
+                    generator = contourpy.contour_generator(
+                        z=np.ma.masked_invalid(self.plane(index, layer)),
+                        line_type="ChunkCombinedNan",
+                    )
+                sections = []
+                for sign in (1, -1):
+                    chunks = [
+                        np.asarray(points, dtype="<f4").tobytes()
+                        for points in generator.lines(float(sign * level * self.noise))[0]
+                        if points is not None
+                    ]
+                    sections.append(separator.join(chunks))
+                payload = struct.pack("<II", *(len(section) // 8 for section in sections))
+                payload += b"".join(sections)
+                if len(payload) <= _CACHE_BYTES:
+                    while self._cache and self._cache_size + len(payload) > _CACHE_BYTES:
+                        self._cache_size -= len(self._cache.popitem(last=False)[1])
+                    self._cache[key] = payload
+                    self._cache_size += len(payload)
+            records.append(struct.pack("<d", level) + payload)
+        return struct.pack("<I", len(levels)) + b"".join(records)
 
 
 def create_viewer_server(viewer: SpectrumViewer, port: int = 0) -> tuple[ThreadingHTTPServer, str]:
@@ -219,8 +221,7 @@ def create_viewer_server(viewer: SpectrumViewer, port: int = 0) -> tuple[Threadi
                         body = viewer.contours(
                             int(query["plane"][0]),
                             query["layer"][0],
-                            float(query["level"][0]),
-                            float(query.get("factor", [str(_CONTOUR_FACTOR)])[0]),
+                            [float(height) for height in query["levels"][0].split(",")],
                         )
                     content_type = "application/octet-stream"
                 else:

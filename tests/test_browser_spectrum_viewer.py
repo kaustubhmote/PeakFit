@@ -29,19 +29,38 @@ def viewer(monkeypatch: pytest.MonkeyPatch) -> SpectrumViewer:
     return SpectrumViewer(NMRData("test.ft3", {}, data, (10, 2), (130, 100)))
 
 
+def decode_contours(payload: bytes):
+    count = struct.unpack_from("<I", payload)[0]
+    offset = 4
+    result = {}
+    for _ in range(count):
+        height, positive_count, negative_count = struct.unpack_from("<dII", payload, offset)
+        offset += 16
+        sections = []
+        for point_count in (positive_count, negative_count):
+            sections.append(
+                np.frombuffer(payload, dtype="<f4", count=point_count * 2, offset=offset).reshape(
+                    -1, 2
+                )
+            )
+            offset += point_count * 8
+        result[height] = sections
+    assert offset == len(payload)
+    return result
+
+
 def test_binary_contours_keep_signs_and_sample_coordinates(viewer: SpectrumViewer) -> None:
-    payload = viewer.contours(0, "experimental", 5)
-    positive_count = struct.unpack("<I", payload[:4])[0]
-    points = np.frombuffer(payload, dtype="<f4", offset=4).reshape(-1, 2)
-    positive = points[:positive_count]
-    negative = points[positive_count:]
+    levels = [float(5 * 1.4**index) for index in range(25)]
+    payload = viewer.contours(0, "experimental", levels)
+    decoded = decode_contours(payload)
+    assert list(decoded) == levels
+    positive = np.concatenate([sections[0] for sections in decoded.values()])
+    negative = np.concatenate([sections[1] for sections in decoded.values()])
     assert np.nanmin(positive[:, 0]) == pytest.approx(5.0)
     assert np.nanmax(negative[:, 0]) == pytest.approx(3.0)
-    assert np.nanmin(points[:, 1]) == 0
-    assert np.nanmax(points[:, 1]) == 6
-    assert np.isnan(positive).any()
-    assert np.isnan(negative).any()
-    assert viewer.contours(0, "experimental", 5) is payload
+    assert np.nanmin(positive[:, 1]) == 0
+    assert np.nanmax(positive[:, 1]) == 6
+    assert viewer.contours(0, "experimental", levels) == payload
 
 
 def test_simulation_and_residual_share_one_reconstruction(viewer: SpectrumViewer) -> None:
@@ -61,10 +80,10 @@ def test_simulation_and_residual_share_one_reconstruction(viewer: SpectrumViewer
     assert calls == [0, 1]
 
 
-@pytest.mark.parametrize("level", [0, -1, float("nan"), float("inf"), 1001])
+@pytest.mark.parametrize("level", [0, -1, float("nan"), float("inf")])
 def test_rejects_invalid_contour_levels(viewer: SpectrumViewer, level: float) -> None:
-    with pytest.raises(ValueError, match="Contour level"):
-        viewer.contours(0, "experimental", level)
+    with pytest.raises(ValueError, match="positive, finite contour heights"):
+        viewer.contours(0, "experimental", [level])
 
 
 @pytest.mark.parametrize(
@@ -76,17 +95,20 @@ def test_rejects_unavailable_planes_and_layers(viewer: SpectrumViewer, index, la
 
 
 def test_contour_cache_is_bounded(viewer: SpectrumViewer, monkeypatch: pytest.MonkeyPatch) -> None:
-    first = viewer.contours(0, "experimental", 5)
-    monkeypatch.setattr(spectra_viewer, "_CACHE_BYTES", len(first) + 10)
-    second = viewer.contours(1, "experimental", 5)
-    assert viewer._cache_size == len(second)
-    assert (0, "experimental", 5, 1.4) not in viewer._cache
+    viewer.contours(0, "experimental", [5])
+    size = viewer._cache_size
+    monkeypatch.setattr(spectra_viewer, "_CACHE_BYTES", size + 10)
+    viewer.contours(1, "experimental", [5])
+    assert viewer._cache_size == size
+    assert (0, "experimental", 5) not in viewer._cache
 
 
 def test_constant_spectrum_has_valid_empty_contours() -> None:
     viewer = SpectrumViewer(NMRData("zero", {}, np.zeros((1, 3, 4)), (9, 6), (130, 100)))
     assert viewer.noise > 0
-    assert viewer.contours(0, "experimental", 5) == struct.pack("<I", 0)
+    decoded = decode_contours(viewer.contours(0, "experimental", [5]))
+    assert decoded[5][0].shape == (0, 2)
+    assert decoded[5][1].shape == (0, 2)
 
 
 def test_indirect_peak_aliasing_uses_full_sweep_width(viewer: SpectrumViewer) -> None:
@@ -111,14 +133,14 @@ def test_http_serves_only_session_assets_and_valid_layers(viewer: SpectrumViewer
                 assert response.status == 200
                 assert response.read()
         with urlopen(
-            base + prefix + "contours?plane=0&layer=experimental&level=5", timeout=5
+            base + prefix + "contours?plane=0&layer=experimental&levels=5,7", timeout=5
         ) as response:
             assert response.headers["Content-Type"] == "application/octet-stream"
-            assert response.read() == viewer.contours(0, "experimental", 5)
+            assert response.read() == viewer.contours(0, "experimental", [5, 7])
         for route, code in [
             ("/metadata", 404),
             (prefix + "../pyproject.toml", 404),
-            (prefix + "contours?plane=0&layer=residual&level=5", 400),
+            (prefix + "contours?plane=0&layer=residual&levels=5", 400),
             (prefix + "contours?plane=0", 400),
         ]:
             with pytest.raises(HTTPError) as caught:
@@ -155,16 +177,34 @@ def test_missing_simulation_state_is_actionable(tmp_path: Path) -> None:
         _ = SpectraReconstructor(tmp_path).state
 
 
-@pytest.mark.parametrize("factor", [1, 0, float("nan"), float("inf"), 3.1])
-def test_rejects_invalid_contour_multipliers(viewer: SpectrumViewer, factor: float) -> None:
-    with pytest.raises(ValueError, match="Contour multiplier"):
-        viewer.contours(0, "experimental", 5, factor)
+@pytest.mark.parametrize("levels", [[], [1] * 26, [5, 5]])
+def test_rejects_invalid_contour_batches(viewer: SpectrumViewer, levels) -> None:
+    with pytest.raises(ValueError, match=r"Request between|must be unique"):
+        viewer.contours(0, "experimental", levels)
 
 
-def test_contour_multiplier_changes_spacing_and_cache(viewer: SpectrumViewer) -> None:
-    payload = viewer.contours(0, "experimental", 5, 2)
-    count = struct.unpack("<I", payload[:4])[0]
-    points = np.frombuffer(payload, dtype="<f4", offset=4).reshape(-1, 2)[:count]
-    xs = np.unique(points[np.isfinite(points[:, 0]), 0])
-    np.testing.assert_allclose(xs, [5, 6])
-    assert payload != viewer.contours(0, "experimental", 5, 1.4)
+def test_overlapping_levels_only_extract_the_added_height(
+    viewer: SpectrumViewer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original = spectra_viewer.contourpy.contour_generator
+    calculated = []
+
+    class RecordingGenerator:
+        def __init__(self, **kwargs):
+            self.generator = original(**kwargs)
+
+        def lines(self, height):
+            calculated.append(height)
+            return self.generator.lines(height)
+
+    monkeypatch.setattr(spectra_viewer.contourpy, "contour_generator", RecordingGenerator)
+    levels = [float(f"{5 * 1.4**index:.12g}") for index in range(26)]
+    before = decode_contours(viewer.contours(0, "experimental", levels[:25]))
+    assert len(calculated) == 50
+    after = decode_contours(viewer.contours(0, "experimental", levels[1:]))
+    assert calculated[50:] == [levels[-1], -levels[-1]]
+    for height in levels[1:25]:
+        np.testing.assert_array_equal(before[height][0], after[height][0])
+        np.testing.assert_array_equal(before[height][1], after[height][1])
+    viewer.contours(0, "experimental", levels[:25])
+    assert len(calculated) == 52

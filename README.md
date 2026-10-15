@@ -208,6 +208,10 @@ Ctrl+C in the terminal to stop it. No internet connection is needed.
   Wheel up increases either value; wheel down decreases it. Both values are also editable.
 - Toggle **Experimental**, **Simulated**, and **Residual** independently to compare
   the data, the fitted model, and their signed difference, experimental minus simulated.
+- Set **Aspect ratio** to **1:1** for the default square plot area, or choose
+  **4:3**, **16:9**, **3:4**, or **Fit window**. Ratios describe the plot width and
+  height, not the scale of one ppm on each axis. Changing the ratio preserves
+  the displayed ppm ranges.
 - Choose a plane or focus a peak. Double-click or select **Reset view** to reset zoom.
 - Positive contours are solid. Negative contours are dashed in the same layer color.
 

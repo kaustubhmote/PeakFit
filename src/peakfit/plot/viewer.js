@@ -4,6 +4,7 @@ const ctx = canvas.getContext('2d');
 const planeInput = document.querySelector('#plane');
 const levelInput = document.querySelector('#level');
 const factorInput = document.querySelector('#factor');
+const aspectInput = document.querySelector('#aspect');
 const status = document.querySelector('#status');
 const checks = [...document.querySelectorAll('#layers input')];
 const colors = {experimental: '#1763b0', simulated: '#c45a13', residual: '#a62d79'};
@@ -98,20 +99,25 @@ async function load() {
 }
 
 function box() {
-    return {w: Math.max(1, width - margin.left - margin.right),
-            h: Math.max(1, height - margin.top - margin.bottom)};
+    const availableW = Math.max(1, width - margin.left - margin.right),
+          availableH = Math.max(1, height - margin.top - margin.bottom);
+    const aspect = Number(aspectInput.value);
+    const w = aspectInput.value === 'auto' ? availableW : Math.min(availableW, availableH * aspect);
+    const h = aspectInput.value === 'auto' ? availableH : w / aspect;
+    return {left: margin.left + (availableW - w) / 2,
+            top: margin.top + (availableH - h) / 2, w, h};
 }
 
 function screen(x, y) {
-    const {w, h} = box();
-    return [margin.left + (x - view.x0) * w / (view.x1 - view.x0),
-            margin.top + h - (y - view.y0) * h / (view.y1 - view.y0)];
+    const {left, top, w, h} = box();
+    return [left + (x - view.x0) * w / (view.x1 - view.x0),
+            top + h - (y - view.y0) * h / (view.y1 - view.y0)];
 }
 
 function sample(px, py) {
-    const {w, h} = box();
-    return [view.x0 + (px - margin.left) / w * (view.x1 - view.x0),
-            view.y0 + (1 - (py - margin.top) / h) * (view.y1 - view.y0)];
+    const {left, top, w, h} = box();
+    return [view.x0 + (px - left) / w * (view.x1 - view.x0),
+            view.y0 + (1 - (py - top) / h) * (view.y1 - view.y0)];
 }
 
 function ppm(index, axis) {
@@ -135,12 +141,12 @@ function draw() {
     ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
     ctx.clearRect(0, 0, width, height);
     if (!meta || !view) return;
-    const {w, h} = box();
+    const {left, top, w, h} = box();
     const sx = w / (view.x1 - view.x0), sy = h / (view.y1 - view.y0);
     const transform = new DOMMatrix([sx, 0, 0, -sy,
-        margin.left - view.x0 * sx, margin.top + h + view.y0 * sy]);
+        left - view.x0 * sx, top + h + view.y0 * sy]);
     ctx.save();
-    ctx.beginPath(); ctx.rect(margin.left, margin.top, w, h); ctx.clip();
+    ctx.beginPath(); ctx.rect(left, top, w, h); ctx.clip();
     ctx.lineWidth = 1;
     for (const [layer, signedPaths] of current) {
         ctx.strokeStyle = colors[layer];
@@ -157,27 +163,27 @@ function draw() {
         ctx.font = '12px system-ui'; ctx.fillStyle = '#233047';
         for (const peak of meta.peaks) {
             const [x, y] = screen(...peakSample(peak));
-            if (x < margin.left || x > margin.left + w || y < margin.top || y > margin.top + h) continue;
+            if (x < left || x > left + w || y < top || y > top + h) continue;
             ctx.fillRect(x - 2, y - 2, 4, 4);
             ctx.fillText(peak.name, x + 6, y - 6);
         }
     }
     ctx.restore();
     ctx.strokeStyle = '#c3cdda'; ctx.lineWidth = 1; ctx.setLineDash([]);
-    ctx.strokeRect(margin.left, margin.top, w, h);
+    ctx.strokeRect(left, top, w, h);
     ctx.font = '12px system-ui'; ctx.fillStyle = '#526178';
     ctx.textAlign = 'center'; ctx.textBaseline = 'top';
     for (let i = 0; i <= 5; i++) {
         const x = view.x0 + (view.x1 - view.x0) * i / 5;
-        ctx.fillText(ppm(x, 'x').toFixed(3), margin.left + w * i / 5, margin.top + h + 10);
+        ctx.fillText(ppm(x, 'x').toFixed(3), left + w * i / 5, top + h + 10);
     }
-    ctx.fillText(`${meta.x_label} (ppm)`, margin.left + w / 2, height - 20);
+    ctx.fillText(`${meta.x_label} (ppm)`, left + w / 2, top + h + 38);
     ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
     for (let i = 0; i <= 5; i++) {
         const y = view.y0 + (view.y1 - view.y0) * i / 5;
-        ctx.fillText(ppm(y, 'y').toFixed(3), margin.left - 10, margin.top + h - h * i / 5);
+        ctx.fillText(ppm(y, 'y').toFixed(3), left - 10, top + h - h * i / 5);
     }
-    ctx.save(); ctx.translate(17, margin.top + h / 2); ctx.rotate(-Math.PI / 2);
+    ctx.save(); ctx.translate(left - 60, top + h / 2); ctx.rotate(-Math.PI / 2);
     ctx.textAlign = 'center'; ctx.fillText(`${meta.y_label} (ppm)`, 0, 0); ctx.restore();
 }
 
@@ -202,8 +208,8 @@ function pointer(event) {
 }
 
 function inside(px, py) {
-    const {w, h} = box();
-    return px >= margin.left && px <= margin.left + w && py >= margin.top && py <= margin.top + h;
+    const {left, top, w, h} = box();
+    return px >= left && px <= left + w && py >= top && py <= top + h;
 }
 
 canvas.addEventListener('wheel', event => {
@@ -262,6 +268,7 @@ for (const event of ['pointerup', 'pointercancel', 'lostpointercapture']) {
 canvas.addEventListener('dblclick', reset);
 document.querySelector('#reset').addEventListener('click', reset);
 document.querySelector('#labels').addEventListener('change', redraw);
+aspectInput.addEventListener('change', redraw);
 document.querySelector('#peak').addEventListener('change', event => {
     if (event.target.value === '') return;
     const [x, y] = peakSample(meta.peaks[Number(event.target.value)]);

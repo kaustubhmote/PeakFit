@@ -2,11 +2,12 @@
 const canvas = document.querySelector('#spectrum');
 const ctx = canvas.getContext('2d');
 const plot = document.querySelector('#plot');
-const footer = document.querySelector('#viewer-footer');
+const plotArea = document.querySelector('#plot-area');
 const planeInput = document.querySelector('#plane');
 const levelInput = document.querySelector('#level');
 const factorInput = document.querySelector('#factor');
 const aspectInput = document.querySelector('#aspect');
+const widthInput = document.querySelector('#plot-width');
 const status = document.querySelector('#status');
 const checks = [...document.querySelectorAll('#layers input')];
 const colors = {experimental: '#1763b0', simulated: '#c45a13', residual: '#a62d79'};
@@ -266,7 +267,7 @@ for (const event of ['pointerup', 'pointercancel', 'lostpointercapture']) {
 canvas.addEventListener('dblclick', reset);
 document.querySelector('#reset').addEventListener('click', reset);
 document.querySelector('#labels').addEventListener('change', redraw);
-aspectInput.addEventListener('change', resizeCanvas);
+for (const control of [widthInput, aspectInput]) control.addEventListener('input', resizeCanvas);
 document.querySelector('#peak').addEventListener('change', event => {
     if (event.target.value === '') return;
     const [x, y] = peakSample(meta.peaks[Number(event.target.value)]);
@@ -283,20 +284,22 @@ canvas.addEventListener('keydown', event => {
     load();
 });
 function resizeCanvas() {
+    if (!widthInput.checkValidity() || !aspectInput.checkValidity()) return;
+    const scale = Number(widthInput.value) / 100, aspect = Number(aspectInput.value);
+    if (!Number.isFinite(scale) || !Number.isFinite(aspect) || scale <= 0 || aspect <= 0) return;
     const ratio = window.devicePixelRatio || 1;
-    width = canvas.getBoundingClientRect().width;
-    const aspect = Number(aspectInput.value);
-    // Presets use the full width, even when the resulting plot extends below the viewport.
-    const plotTop = plot.getBoundingClientRect().top + window.scrollY;
-    height = aspectInput.value === 'auto'
-        ? Math.max(160, window.innerHeight - plotTop - footer.getBoundingClientRect().height - 2)
-        : Math.max(1, width - margin.left - margin.right) / aspect + margin.top + margin.bottom;
-    const cssHeight = `${height}px`;
+    // Keep the percentage tied to the page width, independent of plot overflow.
+    const availableWidth = Math.max(1, plotArea.getBoundingClientRect().width - 2);
+    width = Math.max(margin.left + margin.right + 1, availableWidth * scale);
+    const plotWidth = width - margin.left - margin.right;
+    height = plotWidth / aspect + margin.top + margin.bottom;
+    const cssWidth = `${width + 2}px`, cssHeight = `${height}px`;
+    if (plot.style.width !== cssWidth) plot.style.width = cssWidth;
     if (canvas.style.height !== cssHeight) canvas.style.height = cssHeight;
     canvas.width = Math.round(width * ratio); canvas.height = Math.round(height * ratio);
     redraw();
 }
-new ResizeObserver(resizeCanvas).observe(plot);
+new ResizeObserver(resizeCanvas).observe(plotArea);
 window.addEventListener('resize', resizeCanvas);
 
 try {

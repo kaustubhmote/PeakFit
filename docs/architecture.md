@@ -67,9 +67,11 @@ there is no JavaScript build step, external service, or CDN. ContourPy extracts
 positive and negative full-resolution contour paths. The server sends little-endian
 float32 coordinates with NaN path breaks. Canvas caches paths and transforms them
 for zoom and pan without further numerical work or network requests. A shared
-plot rectangle defaults to a full-width square, with selectable aspect ratios.
-Fixed ratios determine canvas height from its width and allow vertical page
-scrolling. The fit-window option constrains height to the viewport. Drawing, axes, pointer coordinates, and panning all use that
+plot rectangle defaults to a full-width square. Two decimal inputs control
+width as a percentage of available page width and aspect ratio as width divided
+by height. A stable page wrapper supplies the reference width, so enlarged plots
+can overflow without repeatedly enlarging themselves. Page scrolling exposes
+plots larger than the viewport. Drawing, axes, pointer coordinates, and panning all use that
 rectangle; changing the ratio preserves the viewed sample ranges. Both sides
 bound their contour caches to a 64 MiB budget; the browser estimates native path
 memory. The server retains only one simulated plane at a time.

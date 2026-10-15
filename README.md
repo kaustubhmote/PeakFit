@@ -208,12 +208,13 @@ Ctrl+C in the terminal to stop it. No internet connection is needed.
   Wheel up increases either value; wheel down decreases it. Both values are also editable.
 - Toggle **Experimental**, **Simulated**, and **Residual** independently to compare
   the data, the fitted model, and their signed difference, experimental minus simulated.
-- Set **Aspect ratio** to **1:1** for the default square plot area, or choose
-  **4:3**, **16:9**, **3:4**, or **Fit window**. Ratios describe the plot width and
-  height, not the scale of one ppm on each axis. Changing the ratio preserves
-  the displayed ppm ranges. Fixed ratios use the full page width and extend
-  vertically when needed; scroll the page to see the rest of the spectrum.
-  **Fit window** keeps the whole plot within the viewport.
+- Set **Width (%)** to resize the plot relative to the available page width.
+  It defaults to `100`; decimal values such as `82.5` work, and values above `100`
+  allow horizontal page scrolling.
+- Enter **Aspect ratio** as a decimal width divided by height. The default `1.0`
+  gives a square plot; `0.75` gives a portrait plot and `1.5` gives a wider plot.
+  The ratio describes the plot dimensions, not the scale of one ppm on each axis.
+  Sizing changes preserve the viewed ppm ranges. Scroll the page to see larger plots.
 - Choose a plane or focus a peak. Double-click or select **Reset view** to reset zoom.
 - Positive contours are solid. Negative contours are dashed in the same layer color.
 

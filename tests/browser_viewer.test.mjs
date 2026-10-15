@@ -21,8 +21,9 @@ async function viewer({width = 1000, height = 700} = {}) {
         getBoundingClientRect() { return {left: 0, top: 0, ...viewport}; },
         getContext() { return context; }});
     const elements = Object.fromEntries(['spectrum', 'plane', 'level', 'factor', 'status',
-        'labels', 'peak', 'reset', 'cursor', 'filename', 'plane-count', 'aspect', 'plot', 'viewer-footer'].map(id => [id, control()]));
-    elements['viewer-footer'].getBoundingClientRect = () => ({height: 48});
+        'labels', 'peak', 'reset', 'cursor', 'filename', 'plane-count', 'aspect', 'plot', 'plot-area', 'plot-width'].map(id => [id, control()]));
+    elements['plot-area'].getBoundingClientRect = () => ({left: 0, top: 0, width: viewport.width + 2});
+    elements['plot-width'].value = '100';
     elements.aspect.value = '1';
     elements.plane.value = '1'; elements.level.value = '5'; elements.factor.value = '1.4';
     const checks = ['experimental', 'simulated', 'residual'].map(value => control(value));
@@ -152,11 +153,11 @@ test('square plots use full width and can extend below the viewport', async () =
     assert.ok(top >= 22 && top + h <= 1000 - 58);
 });
 
-test('aspect control offers rectangular plots and the previous fit-window layout', async () => {
+test('floating-point aspect ratios preserve width and use cached contours', async () => {
     const app = await viewer(), count = app.requests.length;
     for (const ratio of [4 / 3, 16 / 9, 3 / 4]) {
         app.elements.aspect.value = String(ratio);
-        app.elements.aspect.listeners.change();
+        app.elements.aspect.listeners.input();
         const [left, top, w, h] = app.frames.at(-1);
         assert.ok(Math.abs(w / h - ratio) < 1e-12);
         assert.ok(left >= 76 && left + w <= 1000 - 24);
@@ -164,10 +165,6 @@ test('aspect control offers rectangular plots and the previous fit-window layout
         assert.equal(top, 22);
         assert.equal(w, 900);
     }
-    app.elements.aspect.value = 'auto';
-    app.elements.aspect.listeners.change();
-    assert.deepEqual(app.frames.at(-1), [76, 22, 900, 620]);
-    assert.equal(app.elements.spectrum.style.height, '700px');
     assert.equal(app.requests.length, count);
 });
 
@@ -176,14 +173,14 @@ test('aspect changes preserve zoom and use the new rectangle for cursor and pan'
     app.wheel(-100);
     const ticks = () => app.axisText.slice(-14).map(([text]) => text);
     const before = ticks();
-    app.elements.aspect.value = 'auto';
-    app.elements.aspect.listeners.change();
+    app.elements.aspect.value = '1.7';
+    app.elements.aspect.listeners.input();
     assert.deepEqual(ticks(), before);
     const [left, top, w, h] = app.frames.at(-1);
     app.elements.spectrum.listeners.pointermove({clientX: left + w / 2, clientY: top + h / 2});
     const center = app.elements.cursor.textContent;
     app.elements.aspect.value = '1';
-    app.elements.aspect.listeners.change();
+    app.elements.aspect.listeners.input();
     const [squareLeft, squareTop, squareW, squareH] = app.frames.at(-1);
     app.elements.spectrum.listeners.pointermove({clientX: squareLeft + squareW / 2,
         clientY: squareTop + squareH / 2});
@@ -198,7 +195,7 @@ test('aspect changes preserve zoom and use the new rectangle for cursor and pan'
 test('portrait plots keep their width on short screens and cursor coordinates survive page scroll', async () => {
     const app = await viewer();
     app.elements.aspect.value = '0.75';
-    app.elements.aspect.listeners.change();
+    app.elements.aspect.listeners.input();
     assert.equal(app.frames.at(-1)[2], 900);
     assert.equal(app.frames.at(-1)[3], 1200);
     assert.equal(app.elements.spectrum.style.height, '1280px');
@@ -208,4 +205,41 @@ test('portrait plots keep their width on short screens and cursor coordinates su
     app.elements.spectrum.getBoundingClientRect = () => ({left: 0, top: -300, width: 1000});
     app.elements.spectrum.listeners.pointermove({clientX: 600, clientY: 100});
     assert.equal(app.elements.cursor.textContent, before);
+});
+
+
+test('decimal width percentages resize the plot independently of the aspect ratio and zoom', async () => {
+    const app = await viewer();
+    app.wheel(-100);
+    const ticks = () => app.axisText.slice(-14).map(([text]) => text);
+    const before = ticks(), count = app.requests.length;
+    app.elements.aspect.value = '1.25';
+    app.elements.aspect.listeners.input();
+    for (const percent of [50, 82.5, 150]) {
+        app.elements['plot-width'].value = String(percent);
+        app.elements['plot-width'].listeners.input();
+        const [left, top, w, h] = app.frames.at(-1);
+        assert.equal(left, 76);
+        assert.equal(top, 22);
+        assert.equal(w, 1000 * percent / 100 - 100);
+        assert.equal(h, w / 1.25);
+        assert.equal(Number.parseFloat(app.elements.plot.style.width), 1000 * percent / 100 + 2);
+        assert.deepEqual(ticks(), before);
+    }
+    app.resize(800, 700);
+    assert.equal(Number.parseFloat(app.elements.plot.style.width), 1202);
+    assert.equal(app.requests.length, count);
+});
+
+test('incomplete or invalid sizing inputs leave the current layout intact', async () => {
+    const app = await viewer(), before = app.frames.at(-1);
+    for (const field of [app.elements.aspect, app.elements['plot-width']]) {
+        const original = field.value;
+        for (const value of ['', '0', '-1', 'Infinity']) {
+            field.value = value;
+            field.listeners.input();
+            assert.deepEqual(app.frames.at(-1), before);
+        }
+        field.value = original;
+    }
 });

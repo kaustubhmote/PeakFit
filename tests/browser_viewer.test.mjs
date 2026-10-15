@@ -5,19 +5,28 @@ import test from 'node:test';
 import vm from 'node:vm';
 
 const source = await readFile(new URL('../src/peakfit/plot/viewer.js', import.meta.url), 'utf8');
+const html = await readFile(new URL('../src/peakfit/plot/viewer.html', import.meta.url), 'utf8');
 
-async function viewer({width = 1000, height = 700} = {}) {
-    const requests = [], timers = new Map(), axisText = [], frames = [], strokes = [];
-    let drawn = [], holdContours = false, failNext = false;
+async function viewer({width = 1000, height = 700, layers = ['experimental'], negativeContours = false} = {}) {
+    const requests = [], timers = new Map(), axisText = [], frames = [], strokes = [], paints = [];
+    let drawn = [], painted = [], dash = [], holdContours = false, failNext = false;
     const releases = [];
     const viewport = {width, height};
     let observer, bitmapResets = 0, pixelWidth = 0, pixelHeight = 0;
     let timerId = 0;
-    const context = new Proxy({}, {get: (_target, key) => key === 'fillText'
+    const context = new Proxy({}, {get: (target, key) => key in target ? target[key] : key === 'fillText'
         ? (...args) => axisText.push(args)
-        : key === 'clearRect' ? () => { drawn = []; }
-        : key === 'stroke' ? path => { if (path.source?.pointCount) drawn.push(path.source); }
-        : key === 'strokeRect' ? (...args) => { frames.push(args); strokes.push([...drawn]); } : () => {}});
+        : key === 'clearRect' ? () => { drawn = []; painted = []; }
+        : key === 'setLineDash' ? value => { dash = [...value]; }
+        : key === 'stroke' ? path => {
+            if (path.source?.pointCount) {
+                drawn.push(path.source);
+                painted.push({color: context.strokeStyle, dash: [...dash]});
+            }
+        }
+        : key === 'strokeRect' ? (...args) => {
+            frames.push(args); strokes.push([...drawn]); paints.push([...painted]);
+        } : () => {}});
     const control = (value = '') => ({value, checked: true, disabled: false, listeners: {},
         addEventListener(name, callback) { this.listeners[name] = callback; },
         checkValidity() { return this.value !== ''; }, classList: {toggle() {}},
@@ -26,6 +35,9 @@ async function viewer({width = 1000, height = 700} = {}) {
         getContext() { return context; }});
     const elements = Object.fromEntries(['spectrum', 'plane', 'level', 'factor', 'status',
         'labels', 'peak', 'reset', 'cursor', 'filename', 'plane-count', 'aspect', 'plot', 'plot-area', 'plot-width'].map(id => [id, control()]));
+    for (const tag of html.matchAll(/<input id="([^"]+)" type="color"[^>]*value="([^"]+)"/g)) {
+        elements[tag[1]] = control(tag[2]);
+    }
     Object.defineProperties(elements.spectrum, {
         width: {get: () => pixelWidth, set: value => { pixelWidth = value; bitmapResets++; }},
         height: {get: () => pixelHeight, set: value => { pixelHeight = value; bitmapResets++; }},
@@ -63,18 +75,23 @@ async function viewer({width = 1000, height = 700} = {}) {
             }
             return {ok: true, json: async () => ({filename: 'test.ft3', shape: [2, 101, 101],
                 xlim: [10, 0], ylim: [150, 50], x_label: 'H', y_label: 'N', noise: 1,
-                layers: ['experimental'], contour_count: 25, peaks: []}),
+                layers, contour_count: 25, peaks: []}),
                 arrayBuffer: async () => {
                     const levels = new URL(url, 'http://localhost').searchParams.get('levels').split(',').map(Number);
-                    const buffer = new ArrayBuffer(4 + levels.length * 32), data = new DataView(buffer);
+                    const stride = negativeContours ? 48 : 32;
+                    const buffer = new ArrayBuffer(4 + levels.length * stride), data = new DataView(buffer);
                     data.setUint32(0, levels.length, true);
                     levels.forEach((height, i) => {
-                        const offset = 4 + i * 32;
+                        const offset = 4 + i * stride;
                         data.setFloat64(offset, height, true);
                         data.setUint32(offset + 8, 2, true);
-                        data.setUint32(offset + 12, 0, true);
+                        data.setUint32(offset + 12, negativeContours ? 2 : 0, true);
                         data.setFloat32(offset + 16, 0, true); data.setFloat32(offset + 20, 0, true);
                         data.setFloat32(offset + 24, 1, true); data.setFloat32(offset + 28, 1, true);
+                        if (negativeContours) {
+                            data.setFloat32(offset + 32, 2, true); data.setFloat32(offset + 36, 2, true);
+                            data.setFloat32(offset + 40, 3, true); data.setFloat32(offset + 44, 3, true);
+                        }
                     });
                     return buffer;
                 }};
@@ -101,7 +118,7 @@ async function viewer({width = 1000, height = 700} = {}) {
     const blockContours = () => { holdContours = true; };
     const releaseContours = () => { holdContours = false; releases.splice(0).forEach(resolve => resolve()); };
     const failContours = () => { failNext = true; };
-    return {elements, wheel, settle, requests, cursor, axisText, frames, resize, strokes,
+    return {elements, wheel, settle, requests, cursor, axisText, frames, resize, strokes, paints,
             blockContours, releaseContours, failContours, bitmapResets: () => bitmapResets};
 }
 
@@ -361,4 +378,43 @@ test('returning to a preset multiplier reuses the previously calculated heights'
     assert.equal(Number(app.elements.factor.value), 1.4);
     assert.equal(app.requests.length, count);
     assert.deepEqual(new Set(app.strokes.at(-1)), previous);
+});
+
+test('each layer draws solid positive and negative contours in its default colors', async () => {
+    const app = await viewer({layers: ['experimental', 'simulated', 'residual'], negativeContours: true});
+    const painted = app.paints.at(-1);
+    assert.equal(painted.length, 150);
+    for (const [layer, expected] of [[0, ['#1763b0', '#ff0000']], [1, ['#ffa500', '#008000']], [2, ['#000000', '#000000']]]) {
+        assert.deepEqual(painted.slice(layer * 50, layer * 50 + 2).map(paint => paint.color), expected);
+    }
+    assert.ok(painted.every(paint => paint.dash.length === 0));
+});
+
+test('each color picker recolors only its layer and sign without requesting contours', async () => {
+    const layers = ['experimental', 'simulated', 'residual'];
+    const app = await viewer({layers, negativeContours: true});
+    const count = app.requests.length, paths = app.strokes.at(-1), before = app.cursor();
+    for (const [layer, name] of layers.entries()) {
+        for (const [sign, label] of ['positive', 'negative'].entries()) {
+            const previous = app.paints.at(-1);
+            app.elements[`${name}-${label}`].value = '#123456';
+            app.elements[`${name}-${label}`].listeners.input();
+            const painted = app.paints.at(-1);
+            assert.equal(painted[layer * 50 + sign].color, '#123456');
+            assert.ok(painted.every((paint, index) => paint.color ===
+                (Math.floor(index / 50) === layer && index % 2 === sign ? '#123456' : previous[index].color)));
+            assert.deepEqual(app.strokes.at(-1), paths);
+        }
+    }
+    assert.equal(app.requests.length, count);
+    assert.equal(app.cursor(), before);
+});
+
+test('color pickers for unavailable fitted layers are disabled', async () => {
+    const app = await viewer();
+    for (const sign of ['positive', 'negative']) {
+        assert.equal(app.elements[`experimental-${sign}`].disabled, false);
+        assert.equal(app.elements[`simulated-${sign}`].disabled, true);
+        assert.equal(app.elements[`residual-${sign}`].disabled, true);
+    }
 });

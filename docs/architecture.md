@@ -82,6 +82,9 @@ plots larger than the viewport. Drawing, axes, pointer coordinates, and panning 
 rectangle; changing the ratio preserves the viewed sample ranges. Both sides
 bound their contour caches to a 64 MiB budget; the browser estimates native path
 memory. The server retains only one simulated plane at a time.
+Six browser color pickers set independent positive and negative colors for the
+three layers. All contours use solid strokes. Color edits redraw the existing
+paths without contour extraction or network requests.
 
 `plot.reconstruction` uses the final nonlinear parameters and retained amplitudes
 from `summary/fit.json`, matched by cluster ID and peak order to geometry in

@@ -219,7 +219,10 @@ Ctrl+C in the terminal to stop it. No internet connection is needed.
   The ratio describes the plot dimensions, not the scale of one ppm on each axis.
   Sizing changes preserve the viewed ppm ranges. Scroll the page to see larger plots.
 - Choose a plane or focus a peak. Double-click or select **Reset view** to reset zoom.
-- Positive contours are solid. Negative contours are dashed in the same layer color.
+- Use the **+** and **−** color pickers beside each layer to color positive and
+  negative contours separately. All contours are solid. Defaults are blue/red
+  for experimental, orange/green for simulated, and black/black for residual.
+  Color changes redraw cached paths immediately without recalculating contours.
 
 The base defaults to five times the noise, with 25 levels per sign and a multiplier
 of 1.4. All layers share the same levels. The previous spectrum stays visible

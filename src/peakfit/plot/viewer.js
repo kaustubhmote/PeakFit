@@ -10,8 +10,9 @@ const contourFactors = [...factorInput.options].map(option => Number(option.valu
 const aspectInput = document.querySelector('#aspect');
 const widthInput = document.querySelector('#plot-width');
 const status = document.querySelector('#status');
-const checks = [...document.querySelectorAll('#layers input')];
-const colors = {experimental: '#1763b0', simulated: '#c45a13', residual: '#a62d79'};
+const checks = [...document.querySelectorAll('#layers input[type=checkbox]')];
+const colors = Object.fromEntries(['experimental', 'simulated', 'residual'].map(layer =>
+    [layer, ['positive', 'negative'].map(sign => document.querySelector(`#${layer}-${sign}`))]));
 const cache = new Map();
 const inflight = new Map();
 const cacheLimit = 64 * 1024 * 1024;
@@ -169,17 +170,16 @@ function draw() {
     ctx.save();
     ctx.beginPath(); ctx.rect(left, top, w, h); ctx.clip();
     ctx.lineWidth = 1;
+    ctx.setLineDash([]);
     for (const [layer, levels] of current) {
-        ctx.strokeStyle = colors[layer];
         for (const signedPaths of levels) signedPaths.forEach((path, sign) => {
             // Transform the geometry, preserving a uniform one-pixel stroke.
             const visible = new Path2D();
             visible.addPath(path, transform);
-            ctx.setLineDash(sign ? [4, 3] : []);
+            ctx.strokeStyle = colors[layer][sign].value;
             ctx.stroke(visible);
         });
     }
-    ctx.setLineDash([]);
     if (document.querySelector('#labels').checked) {
         ctx.font = '12px system-ui'; ctx.fillStyle = '#233047';
         for (const peak of meta.peaks) {
@@ -303,6 +303,7 @@ for (const event of ['pointerup', 'pointercancel', 'lostpointercapture']) {
 canvas.addEventListener('dblclick', reset);
 document.querySelector('#reset').addEventListener('click', reset);
 document.querySelector('#labels').addEventListener('change', redraw);
+for (const input of Object.values(colors).flat()) input.addEventListener('input', redraw);
 for (const control of [widthInput, aspectInput]) control.addEventListener('input', resizeCanvas);
 document.querySelector('#peak').addEventListener('change', event => {
     if (event.target.value === '') return;
@@ -348,6 +349,7 @@ try {
     document.querySelector('#plane-count').textContent = `/ ${meta.shape[0]}`;
     for (const check of checks) {
         check.disabled = !meta.layers.includes(check.value);
+        for (const input of colors[check.value]) input.disabled = check.disabled;
         if (check.disabled) { check.checked = false; check.parentElement.title = 'Supply --results to enable'; }
     }
     document.querySelector('#labels').disabled = !meta.peaks.length;

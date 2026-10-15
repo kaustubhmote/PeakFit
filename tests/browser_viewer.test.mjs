@@ -21,7 +21,8 @@ async function viewer({width = 1000, height = 700} = {}) {
         getBoundingClientRect() { return {left: 0, top: 0, ...viewport}; },
         getContext() { return context; }});
     const elements = Object.fromEntries(['spectrum', 'plane', 'level', 'factor', 'status',
-        'labels', 'peak', 'reset', 'cursor', 'filename', 'plane-count', 'aspect'].map(id => [id, control()]));
+        'labels', 'peak', 'reset', 'cursor', 'filename', 'plane-count', 'aspect', 'plot', 'viewer-footer'].map(id => [id, control()]));
+    elements['viewer-footer'].getBoundingClientRect = () => ({height: 48});
     elements.aspect.value = '1';
     elements.plane.value = '1'; elements.level.value = '5'; elements.factor.value = '1.4';
     const checks = ['experimental', 'simulated', 'residual'].map(value => control(value));
@@ -30,7 +31,7 @@ async function viewer({width = 1000, height = 700} = {}) {
     class ResizeObserver { constructor(callback) { this.callback = callback; observer = this; }
         observe() { this.callback(); } }
     const sandbox = {console, URLSearchParams, DataView, Map, Number, Math, Promise,
-        Path2D, DOMMatrix, ResizeObserver, Option: class {}, window: {devicePixelRatio: 1},
+        Path2D, DOMMatrix, ResizeObserver, Option: class {}, window: {devicePixelRatio: 1, innerHeight: height + 50, scrollY: 0, addEventListener() {}},
         document: {querySelector: selector => elements[selector.slice(1)],
                    querySelectorAll: () => checks},
         requestAnimationFrame: callback => callback(),
@@ -59,7 +60,8 @@ async function viewer({width = 1000, height = 700} = {}) {
         return elements.cursor.textContent;
     };
     const resize = (width, height) => {
-        Object.assign(viewport, {width, height}); observer.callback();
+        Object.assign(viewport, {width, height});
+        sandbox.window.innerHeight = height + 50; observer.callback();
     };
     return {elements, wheel, settle, requests, cursor, axisText, frames, resize};
 }
@@ -134,12 +136,15 @@ test('Shift-scroll accepts a horizontal wheel delta', async () => {
 });
 
 
-test('plot defaults to a centered square and stays square on resize', async () => {
+test('square plots use full width and can extend below the viewport', async () => {
     const app = await viewer();
     let [left, top, w, h] = app.frames.at(-1);
     assert.equal(w, h);
-    assert.equal(left - 76, 1000 - 24 - left - w);
-    assert.equal(top - 22, 700 - 58 - top - h);
+    assert.equal(left, 76);
+    assert.equal(top, 22);
+    assert.equal(w, 900);
+    assert.ok(h > 700);
+    assert.equal(app.elements.spectrum.style.height, '980px');
     app.resize(600, 1000);
     [left, top, w, h] = app.frames.at(-1);
     assert.equal(w, h);
@@ -155,11 +160,14 @@ test('aspect control offers rectangular plots and the previous fit-window layout
         const [left, top, w, h] = app.frames.at(-1);
         assert.ok(Math.abs(w / h - ratio) < 1e-12);
         assert.ok(left >= 76 && left + w <= 1000 - 24);
-        assert.ok(top >= 22 && top + h <= 700 - 58);
+        assert.equal(left, 76);
+        assert.equal(top, 22);
+        assert.equal(w, 900);
     }
     app.elements.aspect.value = 'auto';
     app.elements.aspect.listeners.change();
     assert.deepEqual(app.frames.at(-1), [76, 22, 900, 620]);
+    assert.equal(app.elements.spectrum.style.height, '700px');
     assert.equal(app.requests.length, count);
 });
 
@@ -185,4 +193,19 @@ test('aspect changes preserve zoom and use the new rectangle for cursor and pan'
     app.elements.spectrum.listeners.pointermove({clientX: squareLeft + squareW / 2 + 20,
         clientY: squareTop + squareH / 2});
     assert.notDeepEqual(ticks(), before);
+});
+
+test('portrait plots keep their width on short screens and cursor coordinates survive page scroll', async () => {
+    const app = await viewer();
+    app.elements.aspect.value = '0.75';
+    app.elements.aspect.listeners.change();
+    assert.equal(app.frames.at(-1)[2], 900);
+    assert.equal(app.frames.at(-1)[3], 1200);
+    assert.equal(app.elements.spectrum.style.height, '1280px');
+    app.resize(1000, 400);
+    assert.equal(app.elements.spectrum.style.height, '1280px');
+    const before = app.cursor();
+    app.elements.spectrum.getBoundingClientRect = () => ({left: 0, top: -300, width: 1000});
+    app.elements.spectrum.listeners.pointermove({clientX: 600, clientY: 100});
+    assert.equal(app.elements.cursor.textContent, before);
 });

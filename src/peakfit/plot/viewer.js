@@ -1,6 +1,8 @@
 // Contour geometry stays in sample coordinates. Zoom and pan only transform paths.
 const canvas = document.querySelector('#spectrum');
 const ctx = canvas.getContext('2d');
+const plot = document.querySelector('#plot');
+const footer = document.querySelector('#viewer-footer');
 const planeInput = document.querySelector('#plane');
 const levelInput = document.querySelector('#level');
 const factorInput = document.querySelector('#factor');
@@ -99,13 +101,9 @@ async function load() {
 }
 
 function box() {
-    const availableW = Math.max(1, width - margin.left - margin.right),
-          availableH = Math.max(1, height - margin.top - margin.bottom);
-    const aspect = Number(aspectInput.value);
-    const w = aspectInput.value === 'auto' ? availableW : Math.min(availableW, availableH * aspect);
-    const h = aspectInput.value === 'auto' ? availableH : w / aspect;
-    return {left: margin.left + (availableW - w) / 2,
-            top: margin.top + (availableH - h) / 2, w, h};
+    return {left: margin.left, top: margin.top,
+            w: Math.max(1, width - margin.left - margin.right),
+            h: Math.max(1, height - margin.top - margin.bottom)};
 }
 
 function screen(x, y) {
@@ -268,7 +266,7 @@ for (const event of ['pointerup', 'pointercancel', 'lostpointercapture']) {
 canvas.addEventListener('dblclick', reset);
 document.querySelector('#reset').addEventListener('click', reset);
 document.querySelector('#labels').addEventListener('change', redraw);
-aspectInput.addEventListener('change', redraw);
+aspectInput.addEventListener('change', resizeCanvas);
 document.querySelector('#peak').addEventListener('change', event => {
     if (event.target.value === '') return;
     const [x, y] = peakSample(meta.peaks[Number(event.target.value)]);
@@ -284,12 +282,22 @@ canvas.addEventListener('keydown', event => {
         (event.key === 'ArrowRight' ? 1 : -1)));
     load();
 });
-new ResizeObserver(() => {
-    const rect = canvas.getBoundingClientRect(), ratio = window.devicePixelRatio || 1;
-    width = rect.width; height = rect.height;
+function resizeCanvas() {
+    const ratio = window.devicePixelRatio || 1;
+    width = canvas.getBoundingClientRect().width;
+    const aspect = Number(aspectInput.value);
+    // Presets use the full width, even when the resulting plot extends below the viewport.
+    const plotTop = plot.getBoundingClientRect().top + window.scrollY;
+    height = aspectInput.value === 'auto'
+        ? Math.max(160, window.innerHeight - plotTop - footer.getBoundingClientRect().height - 2)
+        : Math.max(1, width - margin.left - margin.right) / aspect + margin.top + margin.bottom;
+    const cssHeight = `${height}px`;
+    if (canvas.style.height !== cssHeight) canvas.style.height = cssHeight;
     canvas.width = Math.round(width * ratio); canvas.height = Math.round(height * ratio);
     redraw();
-}).observe(canvas);
+}
+new ResizeObserver(resizeCanvas).observe(plot);
+window.addEventListener('resize', resizeCanvas);
 
 try {
     meta = await (await get('metadata')).json();

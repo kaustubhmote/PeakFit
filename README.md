@@ -211,7 +211,9 @@ Ctrl+C in the terminal to stop it. No internet connection is needed.
 - Set **Aspect ratio** to **1:1** for the default square plot area, or choose
   **4:3**, **16:9**, **3:4**, or **Fit window**. Ratios describe the plot width and
   height, not the scale of one ppm on each axis. Changing the ratio preserves
-  the displayed ppm ranges.
+  the displayed ppm ranges. Fixed ratios use the full page width and extend
+  vertically when needed; scroll the page to see the rest of the spectrum.
+  **Fit window** keeps the whole plot within the viewport.
 - Choose a plane or focus a peak. Double-click or select **Reset view** to reset zoom.
 - Positive contours are solid. Negative contours are dashed in the same layer color.
 

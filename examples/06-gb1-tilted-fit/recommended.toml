@@ -1,0 +1,25 @@
+[fitting]
+lineshape = "pvoigt"
+tilted = true
+refine_iterations = 5
+max_iterations = 1000
+
+[parameters.position_windows]
+F2 = 0.20
+F3 = 0.045
+
+[parameters.defaults]
+"*.*.eta" = { value = 0.0, min = -1, max = 1.0 }
+"*.F2.lw" = { value = 25.0, min = 5.0, max = 120.0 }
+"*.F3.lw" = { value = 60.0, min = 12.0, max = 250.0 }
+"*.*.tilt" = { value = 0.0, min = -60.0, max = 60.0 }
+
+[clustering]
+contour_factor = 3.0
+
+[output]
+directory = "examples/06-gb1-tilted-fit/results/recommended"
+formats = ["json", "csv"]
+save_simulated = false
+include_timestamp = false
+headless = true

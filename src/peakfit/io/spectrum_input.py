@@ -16,11 +16,13 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from peakfit.engine.domain.config import DQFCOSYWindow
 from peakfit.engine.domain.spectrum import Spectra, SpectralParameters, get_dimension_label
+from peakfit.engine.domain.window import ProcessingWindow
 from peakfit.engine.lineshapes.dqfcosy import _header_window
 from peakfit.io.readers.spectrum import (
     P1_MAX,
     P1_MIN,
     _bruker_axis_key,
+    _pipe_processing_window,
     _pseudo_parameters,
     _read_bruker,
     resolve_spectrum_path,
@@ -54,6 +56,7 @@ class AxisProcessing(BaseModel):
     phase0_deg: float | None = None
     phase1_deg: float | None = None
     dqfcosy_window: DQFCOSYWindow | None = None
+    processing_window: ProcessingWindow | None = None
 
 
 @dataclass(frozen=True)
@@ -520,6 +523,7 @@ def extract_spectrum(
                 td_size=proc.td_size if proc else None,
                 ft_size=proc.ft_size if proc else None,
                 dqfcosy_window=proc.dqfcosy_window if proc else None,
+                processing_window=proc.processing_window if proc else None,
                 alias_size=source.udic[axis]["size"],
             )
         )
@@ -575,6 +579,7 @@ def _bruker_input_parts(resolved: Path, series_axis: int | None):
                 phase0_deg=proc["PHC0"],
                 phase1_deg=proc["PHC1"],
                 dqfcosy_window=param.dqfcosy_window,
+                processing_window=param.processing_window,
             )
     return native, data, udic, processing
 
@@ -674,6 +679,15 @@ def _file_input(path, direct_axis, series_axis, series, extra) -> SpectrumInput:
                         "dqfcosy_window": _pipe_window(processing[axis], meta),
                     }
                 )
+            try:
+                window = _pipe_processing_window(native, fn, meta["size"])
+            except ValueError:
+                window = None
+            if window is not None:
+                existing = processing.get(axis) or AxisProcessing(
+                    provenance="NMRPipe acquisition-window headers",
+                )
+                processing[axis] = existing.model_copy(update={"processing_window": window})
         if direct_axis is None:
             direct_axis = next(
                 axis

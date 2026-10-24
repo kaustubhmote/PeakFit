@@ -8,6 +8,7 @@ from typer.testing import CliRunner
 
 from peakfit.cli.app import app
 from peakfit.cli.commands import plot as plot_command
+from peakfit.engine.domain.config import PlotConfig
 from peakfit.io.readers import spectrum as spectrum_reader
 from peakfit.plot import spectra_viewer
 from peakfit.plot.spectra_viewer import NMRData
@@ -63,8 +64,9 @@ def test_nmr_data_loads_direct_bruker_2rr_path(
     assert loaded.ylim == pytest.approx((145.0, 111.6666666667))
 
 
+@pytest.mark.parametrize("configured", [False, True])
 def test_plot_spectrum_command_loads_bruker_2rr_with_results(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, configured: bool
 ) -> None:
     binary, read_paths = _stub_bruker_2rr(monkeypatch, tmp_path)
     results = tmp_path / "results"
@@ -78,25 +80,28 @@ def test_plot_spectrum_command_loads_bruker_2rr_with_results(
         captured["data"] = data
         captured["browser"] = kwargs["open_browser"]
         captured["port"] = kwargs["port"]
+        captured["plot_config"] = kwargs["plot_config"]
         kwargs["on_ready"]("http://127.0.0.1:8765/session/")
 
     monkeypatch.setattr(plot_command, "_init_reconstructor", _init_reconstructor)
     monkeypatch.setattr(spectra_viewer, "serve_viewer", fake_serve)
 
-    result = CliRunner().invoke(
-        app,
-        [
-            "plot",
-            "spectrum",
-            "--spectrum",
-            str(binary),
-            "--results",
-            str(results),
-            "--no-browser",
-            "--port",
-            "8765",
-        ],
-    )
+    args = [
+        "plot",
+        "spectrum",
+        "--spectrum",
+        str(binary),
+        "--results",
+        str(results),
+        "--no-browser",
+        "--port",
+        "8765",
+    ]
+    if configured:
+        config = tmp_path / "plot.toml"
+        config.write_text('[plot.simulated]\ncolor = "#aabbcc"\nlinewidth = 0.75\n')
+        args += ["--config", str(config)]
+    result = CliRunner().invoke(app, args)
 
     assert result.exit_code == 0, result.output
     assert read_paths == [str(binary.parent)]
@@ -105,3 +110,10 @@ def test_plot_spectrum_command_loads_bruker_2rr_with_results(
     assert captured["browser"] is False
     assert captured["port"] == 8765
     assert "http://127.0.0.1:8765/session/" in result.output
+    plot_config = captured["plot_config"]
+    if configured:
+        assert isinstance(plot_config, PlotConfig)
+        assert plot_config.simulated.color == "#aabbcc"
+        assert plot_config.simulated.linewidth == 0.75
+    else:
+        assert plot_config is None

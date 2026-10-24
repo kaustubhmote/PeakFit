@@ -20,6 +20,9 @@ peakfit plot spectrum --spectrum spectrum.ft2 --results Fits/<run_dir>
 Start with [`examples/02-advanced-fitting`](examples/02-advanced-fitting/) for a
 ready-to-run pseudo-ND CEST workflow.
 
+Customize spectrum contour colors, linewidths, and colormaps with
+`peakfit plot spectrum --config peakfit.toml`. See [plotting](docs/plotting.md).
+
 ## Install
 
 PeakFit requires Python 3.14 or newer.

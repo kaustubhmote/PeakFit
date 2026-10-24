@@ -27,6 +27,7 @@ if TYPE_CHECKING:
 
     import pandas as pd
 
+    from peakfit.engine.domain.config import PlotConfig
     from peakfit.engine.domain.spectrum import Spectra, SpectralParameters
     from peakfit.plot.reconstruction import SpectraReconstructor
     from peakfit.shared.typing import FloatArray
@@ -98,10 +99,17 @@ class SpectrumViewer:
         data: NMRData,
         reconstructor: SpectraReconstructor | None = None,
         peaks: pd.DataFrame | None = None,
+        *,
+        plot_config: PlotConfig | None = None,
     ) -> None:
         self.data = data
         self.reconstructor = reconstructor
         self.peaks = peaks
+        self.styles = {}
+        if plot_config is not None:
+            from peakfit.plot.styles import browser_styles  # noqa: PLC0415
+
+            self.styles = browser_styles(plot_config)
         self._cache: OrderedDict[tuple[int, str, float], bytes] = OrderedDict()
         self._cache_size = 0
         self._simulated: tuple[int, FloatArray] | None = None
@@ -132,6 +140,7 @@ class SpectrumViewer:
             "noise": self.noise,
             "contour_count": _CONTOUR_COUNT,
             "layers": layers,
+            "styles": self.styles,
             "peaks": [] if self.peaks is None else self.peaks.to_dict(orient="records"),
         }
 
@@ -264,9 +273,10 @@ def serve_viewer(
     port: int = 0,
     open_browser: bool = True,
     on_ready: Callable[[str], None] | None = None,
+    plot_config: PlotConfig | None = None,
 ) -> None:
     """Serve the viewer until Ctrl+C; optionally open the system browser."""
-    viewer = SpectrumViewer(data, reconstructor, peaks)
+    viewer = SpectrumViewer(data, reconstructor, peaks, plot_config=plot_config)
     server, session_path = create_viewer_server(viewer, port)
     with server:
         url = f"http://127.0.0.1:{server.server_port}{session_path}"

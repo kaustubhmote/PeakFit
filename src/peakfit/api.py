@@ -1,6 +1,7 @@
 """Public headless Python interface. See docs/python-api.md for its contract."""
 
 from peakfit.engine.domain.config import PeakFitConfig
+from peakfit.engine.domain.window import ProcessingWindow
 from peakfit.fit.api import (
     FitCancelledError,
     FitOptions,
@@ -39,6 +40,7 @@ __all__ = [
     "PeakFitConfig",
     "PeakSeed",
     "PreparedFit",
+    "ProcessingWindow",
     "ResourceEstimate",
     "SeedDecision",
     "SeriesAxis",

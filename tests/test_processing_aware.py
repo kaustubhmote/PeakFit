@@ -10,6 +10,15 @@ import pytest
 from nmrglue.fileio import pipe
 from nmrglue.process import pipe_proc, proc_base
 
+from peakfit.api import (
+    AxisProcessing,
+    PeakFitConfig,
+    PeakSeed,
+    SpectrumInput,
+    fit_spectrum,
+    model_availability,
+    prepare_spectrum,
+)
 from peakfit.cli.commands.fit_setup import build_fit_config
 from peakfit.engine.domain.cluster import Cluster
 from peakfit.engine.domain.config import FitConfig
@@ -365,3 +374,93 @@ def test_missing_metadata_and_already_apodized_models_fail_clearly():
     spectrum.params[1].processing_window_error = "unsupported Bruker WDW=5"
     with pytest.raises(ValueError, match="WDW=5"):
         make_model(spectrum)
+
+
+def test_headless_windowed_region_preserves_acquisition_and_final_model(tmp_path):
+    from peakfit.plot.reconstruction import SpectraReconstructor  # noqa: PLC0415
+
+    windows = [
+        ProcessingWindow(kind="em", points=32, dwell=0.002, duration=0.064, q1=4),
+        ProcessingWindow(kind="none", points=32, dwell=0.001, duration=0.032),
+    ]
+    spectrum = make_spectrum(windows, size=25, spacing=3)
+    _, truth, cluster = make_model(spectrum, tilt=True)
+    truth["P.F2.lw"].value = 18
+    truth["P.F3.lw"].value = 32
+    truth["P.F2-F3.tilt"].value = 20
+    data = (cluster.evaluate(truth)[0] * 100).reshape(25, 25)
+    udic = {"ndim": 2}
+    for axis, spec in enumerate(spectrum.spectral_params):
+        udic[axis] = {
+            "size": spec.size,
+            "sw": spec.sw,
+            "obs": spec.obs,
+            "car": spec.car,
+            "freq": True,
+            "time": False,
+            "complex": False,
+            "label": "1H",
+            "encoding": "states" if axis == 0 else "direct",
+        }
+    source = SpectrumInput.from_array(
+        data,
+        udic,
+        direct_axis=1,
+        processing={
+            axis: AxisProcessing(provenance="generated acquisition", processing_window=window)
+            for axis, window in enumerate(windows)
+        },
+    )
+    cfg = PeakFitConfig(noise_level=0.01)
+    cfg.fitting.include_window_functions = True
+    assert all(report.selected == "pvoigt" for report in model_availability(source, cfg))
+    cfg.fitting.lineshape = "gaussian"
+    cfg.fitting.tilted = True
+    bounds = {
+        axis: (spec.pts2ppm(2), spec.pts2ppm(22))
+        for axis, spec in enumerate(spectrum.spectral_params)
+    }
+    seeds = [PeakSeed("P", {0: 0, 1: 0}, widths_hz={0: 20, 1: 28})]
+    prepared = prepare_spectrum(source, peaks=seeds, region_ppm=bounds, config=cfg)
+    assert [spec.processing_window for spec in prepared.data.spectra.spectral_params] == windows
+    result = fit_spectrum(
+        source, peaks=seeds, region_ppm=bounds, config=cfg, output_dir=tmp_path / "fit"
+    )
+    model = result.simulate()
+    assert model is not None
+    np.testing.assert_allclose(model[0], data[2:23, 2:23], atol=0.005)
+    fitted = {parameter.name: parameter for parameter in result.outcome.final_nonlinear_parameters}
+    for name in ("P.F2.lw", "P.F3.lw", "P.F2-F3.tilt"):
+        assert fitted[name].value == pytest.approx(truth[name].value, abs=0.02)
+    # A native source and the numeric export must reconstruct the same windowed crop.
+    native = pipe.create_dic(udic)
+    # create_dic rounds odd-sized grids to an integer center. Store the exact edge.
+    for axis, spec in enumerate(spectrum.spectral_params):
+        prefix = f"FDF{int(native['FDDIMORDER'][1 - axis])}"
+        native[prefix + "ORIG"] = spec.pts2ppm(spec.size - 1) * spec.obs
+    filename = tmp_path / "source.ft2"
+    pipe.write(str(filename), native, data.astype(np.float32), overwrite=True)
+    rec = SpectraReconstructor(tmp_path / "fit")
+    rec.load_region(filename)
+    np.testing.assert_allclose(rec.reconstruct_plane(0, model.shape[1:]), model[0], atol=1e-10)
+
+
+def test_headless_window_flag_requires_complete_metadata_before_cropping():
+    udic = {
+        "ndim": 1,
+        0: {
+            "size": 8,
+            "sw": 100,
+            "obs": 500,
+            "car": 2000,
+            "freq": True,
+            "time": False,
+            "complex": False,
+            "label": "1H",
+        },
+    }
+    source = SpectrumInput.from_array(np.ones(8), udic, direct_axis=0)
+    cfg = PeakFitConfig()
+    cfg.fitting.include_window_functions = True
+    with pytest.raises(ValueError, match="missing validated acquisition/window metadata"):
+        model_availability(source, cfg)

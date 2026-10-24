@@ -65,6 +65,9 @@ fit orchestration, uncertainty analysis, plotting, and output generation.
    `fit.output_metadata` captures non-scientific run metadata; `io` reads inputs
    and projects the outcome into structured artifacts.
 5. `mcmc` and `plot` run post-fit workflows from canonical fit outputs.
+   Spectrum contour styles use the `[plot]` models in `engine.domain.config`.
+   `plot.styles` validates Matplotlib names and translates these models into
+   drawing options. The numerical engine does not import Matplotlib or Qt.
 6. `ui` renders terminal output where the CLI needs it.
 
 ## Headless regional fitting
@@ -130,7 +133,9 @@ simulated, and all layers share signed contour levels. The current viewer suppor
 the real `rr` plane of joint quadrature fits.
 
 The CLI imports Matplotlib output generators only for PDF commands. The browser
-viewer imports neither Matplotlib nor Qt. The experimental automatic picker still
+viewer imports neither Matplotlib nor Qt by default. Explicit TOML contour styles
+load Matplotlib's color validation and colormap tables, then send plain colors
+and widths to the canvas. The experimental automatic picker still
 uses its existing Qt and Matplotlib widgets, and PDF output still uses Matplotlib.
 These dependencies therefore remain in the package.
 

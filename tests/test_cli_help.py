@@ -5,7 +5,7 @@ from peakfit.cli.app import app
 
 
 def rendered_help(*args: str) -> str:
-    result = CliRunner().invoke(app, [*args, "--help"])
+    result = CliRunner().invoke(app, [*args, "--help"], env={"COLUMNS": "180"})
 
     assert result.exit_code == 0, result.output
     return strip_ansi(result.output)
@@ -38,6 +38,8 @@ def test_plot_spectrum_help_mentions_bruker_input() -> None:
     help_text = rendered_help("plot", "spectrum")
 
     assert "NMRPipe file or processed Bruker spectrum" in help_text
+    assert "--config" in help_text
+    assert "TOML file with contour styles" in help_text
 
 
 def test_fit_help_exposes_recorded_window_option() -> None:

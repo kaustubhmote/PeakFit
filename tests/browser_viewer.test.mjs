@@ -7,7 +7,7 @@ import vm from 'node:vm';
 const source = await readFile(new URL('../src/peakfit/plot/viewer.js', import.meta.url), 'utf8');
 const html = await readFile(new URL('../src/peakfit/plot/viewer.html', import.meta.url), 'utf8');
 
-async function viewer({width = 1000, height = 700, layers = ['experimental'], negativeContours = false} = {}) {
+async function viewer({width = 1000, height = 700, layers = ['experimental'], negativeContours = false, styles = {}} = {}) {
     const requests = [], timers = new Map(), axisText = [], frames = [], strokes = [], paints = [];
     let drawn = [], painted = [], dash = [], holdContours = false, failNext = false;
     const releases = [];
@@ -21,7 +21,7 @@ async function viewer({width = 1000, height = 700, layers = ['experimental'], ne
         : key === 'stroke' ? path => {
             if (path.source?.pointCount) {
                 drawn.push(path.source);
-                painted.push({color: context.strokeStyle, dash: [...dash]});
+                painted.push({color: context.strokeStyle, width: context.lineWidth, dash: [...dash]});
             }
         }
         : key === 'strokeRect' ? (...args) => {
@@ -75,7 +75,7 @@ async function viewer({width = 1000, height = 700, layers = ['experimental'], ne
             }
             return {ok: true, json: async () => ({filename: 'test.ft3', shape: [2, 101, 101],
                 xlim: [10, 0], ylim: [150, 50], x_label: 'H', y_label: 'N', noise: 1,
-                layers, contour_count: 25, peaks: []}),
+                layers, styles, contour_count: 25, peaks: []}),
                 arrayBuffer: async () => {
                     const levels = new URL(url, 'http://localhost').searchParams.get('levels').split(',').map(Number);
                     const stride = negativeContours ? 48 : 32;
@@ -417,4 +417,21 @@ test('color pickers for unavailable fitted layers are disabled', async () => {
         assert.equal(app.elements[`simulated-${sign}`].disabled, true);
         assert.equal(app.elements[`residual-${sign}`].disabled, true);
     }
+});
+
+test('TOML styles initialize colors, widths and signed palettes without changing cached paths', async () => {
+    const palette = Array.from({length: 256}, (_, i) => `#${i.toString(16).padStart(2, '0')}0000`);
+    const app = await viewer({negativeContours: true, styles: {experimental: {
+        colors: ['#ff0000', '#000000'], linewidth: 2.5, colormap: palette,
+    }}});
+    assert.equal(app.elements['experimental-positive'].value, '#ff0000');
+    assert.ok(app.paints.at(-1).every(paint => paint.width === 2.5));
+    assert.equal(app.paints.at(-1).at(-2).color, '#ff0000');
+    assert.equal(app.paints.at(-1).at(-1).color, '#000000');
+    const count = app.requests.length, paths = app.strokes.at(-1);
+    app.elements['experimental-positive'].value = '#123456';
+    app.elements['experimental-positive'].listeners.input();
+    assert.equal(app.paints.at(-1)[0].color, '#123456');
+    assert.equal(app.requests.length, count);
+    assert.deepEqual(app.strokes.at(-1), paths);
 });

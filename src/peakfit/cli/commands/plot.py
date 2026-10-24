@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 import typer
 
+from peakfit.io.config import load_config
 from peakfit.io.readers.results import ResultsLoader
 from peakfit.plot.reconstruction import SpectraReconstructor
 from peakfit.ui.branding import show_command_summary
@@ -164,6 +165,17 @@ def plot_spectrum(
         bool,
         typer.Option("--browser/--no-browser", help="Open the system browser automatically"),
     ] = True,
+    config: Annotated[
+        Path | None,
+        typer.Option(
+            "--config",
+            "-c",
+            help="TOML file with contour styles",
+            exists=True,
+            dir_okay=False,
+            resolve_path=True,
+        ),
+    ] = None,
     verbose: Annotated[
         bool,
         typer.Option("--verbose", "-v", help="Verbose output"),
@@ -196,6 +208,15 @@ def plot_spectrum(
         ],
     )
     try:
+        plot_config = load_config(config).plot if config else None
+        if plot_config is not None:
+            from peakfit.plot.styles import browser_styles  # noqa: PLC0415
+
+            browser_styles(plot_config)
+    except (OSError, ValueError) as e:
+        show_error_with_details("loading plot configuration", e)
+        raise typer.Exit(1) from e
+    try:
         from peakfit.plot.spectra_viewer import serve_viewer  # noqa: PLC0415
 
         reconstructor = _init_reconstructor(results)
@@ -216,7 +237,13 @@ def plot_spectrum(
             )
 
         serve_viewer(
-            data_exp, reconstructor, plist, port=port, open_browser=browser, on_ready=ready
+            data_exp,
+            reconstructor,
+            plist,
+            port=port,
+            open_browser=browser,
+            on_ready=ready,
+            plot_config=plot_config,
         )
     except typer.Exit:
         raise

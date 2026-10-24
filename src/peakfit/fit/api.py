@@ -174,12 +174,28 @@ def _processing_candidate(proc) -> str:
     return candidate
 
 
+def _automatic_model(proc, unavailable, missing, windowed) -> tuple[str, str]:
+    if windowed:
+        return "pvoigt", "Selected intrinsic pvoigt with the validated acquisition window."
+    candidate = _processing_candidate(proc)
+    selected = "pvoigt" if candidate in unavailable else candidate
+    reason = unavailable.get(candidate, "Selected from validated processing metadata.")
+    if candidate == "pvoigt":
+        reason = "No supported acquisition-window model; selected empirical pvoigt."
+        if missing:
+            reason += " Missing: " + ", ".join(missing)
+    return selected, reason
+
+
 def model_availability(
     source: SpectrumInput,
     config: PeakFitConfig | None = None,
 ) -> tuple[ModelAvailability, ...]:
     """Inspect model requirements and selection without data allocation or fitting."""
     config = config or PeakFitConfig()
+    windowed = config.fitting.include_window_functions
+    if windowed and len(source.frequency_axes) > _TWO_FREQUENCY_AXES:
+        raise ValueError("Window-aware intrinsic fitting supports one or two frequency axes.")
     reports = []
     for index, external_axis in enumerate(source.frequency_axes):
         label = get_dimension_label(index)
@@ -197,15 +213,17 @@ def model_availability(
             if reason:
                 unavailable[model] = reason
         requested = config.fitting.lineshape
+        if windowed and requested != "dqfcosy":
+            if proc is None or proc.processing_window is None:
+                raise ValueError(
+                    f"Axis {external_axis}: missing validated acquisition/window metadata "
+                    "for include_window_functions."
+                )
+            for model in SHAPES:
+                if model not in _EMPIRICAL:
+                    unavailable[model] = "Window-aware intrinsic fitting requires empirical shapes."
         if requested == "auto":
-            candidate = _processing_candidate(proc)
-            selected = "pvoigt" if candidate in unavailable else candidate
-            reason = unavailable.get(candidate, "Selected from validated processing metadata.")
-            if candidate == "pvoigt":
-                reason = "No supported acquisition-window model; selected empirical pvoigt."
-                if missing:
-                    reason += " Missing: " + ", ".join(missing)
-
+            selected, reason = _automatic_model(proc, unavailable, missing, windowed)
         else:
             selected = requested
             if requested in unavailable:

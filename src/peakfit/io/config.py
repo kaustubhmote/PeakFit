@@ -124,4 +124,22 @@ headless = false
 # Optional settings
 # noise_level = 100.0  # Uncomment to set manual noise level
 # exclude_planes = []  # List of plane indices to exclude
+
+# Spectrum viewer styles: peakfit plot spectrum -s spectrum.ft2 --config peakfit.toml
+# linewidth is in points; omit to use Matplotlib's default.
+# A colormap takes precedence over color; omit it to use a fixed color.
+[plot.experimental]
+color = "C0"
+# linewidth = 1.5
+# colormap = "Blues"
+
+[plot.simulated]
+color = "C1"
+# linewidth = 1.5
+# colormap = "Oranges"
+
+[plot.difference]
+color = "C2"
+# linewidth = 1.5
+# colormap = "RdBu_r"
 """

@@ -172,11 +172,16 @@ function draw() {
     ctx.lineWidth = 1;
     ctx.setLineDash([]);
     for (const [layer, levels] of current) {
-        for (const signedPaths of levels) signedPaths.forEach((path, sign) => {
+        const style = meta.styles?.[layer];
+        ctx.lineWidth = style?.linewidth ?? 1;
+        const heights = contourLevels(), maximum = heights[heights.length - 1];
+        for (const [index, signedPaths] of levels.entries()) signedPaths.forEach((path, sign) => {
             // Transform the geometry, preserving a uniform one-pixel stroke.
             const visible = new Path2D();
             visible.addPath(path, transform);
-            ctx.strokeStyle = colors[layer][sign].value;
+            const fraction = (1 + (sign === 0 ? 1 : -1) * heights[index] / maximum) / 2;
+            ctx.strokeStyle = style?.colormap
+                ? style.colormap[Math.round(fraction * 255)] : colors[layer][sign].value;
             ctx.stroke(visible);
         });
     }
@@ -303,7 +308,12 @@ for (const event of ['pointerup', 'pointercancel', 'lostpointercapture']) {
 canvas.addEventListener('dblclick', reset);
 document.querySelector('#reset').addEventListener('click', reset);
 document.querySelector('#labels').addEventListener('change', redraw);
-for (const input of Object.values(colors).flat()) input.addEventListener('input', redraw);
+for (const [layer, inputs] of Object.entries(colors)) {
+    for (const input of inputs) input.addEventListener('input', () => {
+        if (meta?.styles?.[layer]) meta.styles[layer].colormap = null;
+        redraw();
+    });
+}
 for (const control of [widthInput, aspectInput]) control.addEventListener('input', resizeCanvas);
 document.querySelector('#peak').addEventListener('change', event => {
     if (event.target.value === '') return;
@@ -343,6 +353,9 @@ window.addEventListener('resize', resizeCanvas);
 
 try {
     meta = await (await get('metadata')).json();
+    for (const [layer, style] of Object.entries(meta.styles || {})) {
+        style.colors.forEach((color, sign) => { colors[layer][sign].value = color; });
+    }
     document.title = `${meta.filename} | PeakFit`;
     document.querySelector('#filename').textContent = meta.filename;
     planeInput.max = meta.shape[0];

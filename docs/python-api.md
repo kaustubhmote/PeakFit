@@ -178,7 +178,8 @@ Conflicting noise sources are rejected.
 
 `AxisProcessing`, keyed by external frequency axis, accepts `provenance`,
 `acquisition_time` in seconds, `td_size`, `ft_size`, `apod_code`, `apod_q1`,
-`apod_q2`, `apod_q3`, `phase0_deg`, `phase1_deg`, and `dqfcosy_window`.
+`apod_q2`, `apod_q3`, `phase0_deg`, `phase1_deg`, `dqfcosy_window`, and
+`processing_window`.
 Processing metadata cannot be inferred from a filename, cropped grid, phase fields,
 or a universal dictionary. NMRPipe and Bruker window codes are different; explicit
 `AxisProcessing.apod_code` uses PeakFit/NMRPipe codes. Code `0` means unapodized;
@@ -194,6 +195,33 @@ in configuration or processing metadata. Tilted fitting requires exactly two
 frequency axes. DQF-COSY requires exactly two axes and `tilted=False`.
 The real-array interface rejects `use_imaginary`; existing joint-quadrature CLI
 workflows remain supported independently.
+
+Set `config.fitting.include_window_functions=True` to fit intrinsic Gaussian,
+Lorentzian, or pseudo-Voigt profiles through the recorded acquisition window.
+This uses the same model as the CLI's `--include-window-functions`. It requires
+one or two frequency axes and a validated `processing_window` for every axis.
+`auto` selects intrinsic `pvoigt` in this mode. Missing window metadata raises
+before cropping. Native Bruker and NMRPipe readers provide windows when their
+headers contain the required fields. Arrays can supply them separately:
+
+```python
+from peakfit.api import AxisProcessing, ProcessingWindow
+
+processing = {
+    0: AxisProcessing(
+        provenance="recorded acquisition and exponential processing",
+        processing_window=ProcessingWindow(
+            kind="em", points=128, dwell=0.001, duration=0.128, q1=5.0,
+        ),
+    ),
+}
+```
+
+`points` is the original acquired complex-point count, `dwell` and `duration`
+are in seconds, and coefficients follow the recorded window convention. See
+[processing-aware fitting](processing-aware-fitting.md) for supported windows
+and phase restrictions. Cropping preserves this object unchanged, including
+when a saved region is reopened in the browser.
 
 `auto` selects the supported processing model or empirical `pvoigt`, recording the
 selected model, missing fields, and reason. Explicit unsupported requests raise

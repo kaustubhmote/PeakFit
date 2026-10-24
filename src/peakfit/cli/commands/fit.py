@@ -128,6 +128,13 @@ def fit_command(
             "--imaginary", help="Component path: ri=PATH, ir=PATH, or ii=PATH; repeat as needed"
         ),
     ] = None,
+    include_window_functions: Annotated[
+        bool,
+        typer.Option(
+            "--include-window-functions",
+            help="Apply recorded acquisition windows to intrinsic lineshapes",
+        ),
+    ] = False,
     tilted: Annotated[
         bool,
         typer.Option("--tilted/--axis-aligned", help="Fit rotated two-dimensional peaks"),
@@ -238,6 +245,7 @@ def fit_command(
         contour_level=contour_level,
         lineshape=lineshape,
         tilted=tilted,
+        include_window_functions=include_window_functions,
         refine=refine,
         fixed=fixed,
         jx=jx,

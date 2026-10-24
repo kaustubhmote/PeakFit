@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from peakfit.engine.domain.config import DQFCOSYWindow
 from peakfit.engine.domain.coordinates import DimensionContext
+from peakfit.engine.domain.window import ProcessingWindow
 from peakfit.shared.typing import FloatArray
 
 _MIN_SPECTRA_NDIM = 2
@@ -70,6 +71,8 @@ class SpectralParameters(BaseModel):
     td_size: int | None = None  # Acquisition-domain points (from header TDSIZE)
     ft_size: int | None = None  # Frequency-domain processed points (from header FTSIZE)
     alias_size: int | None = None  # Original stored period in points, retained after a crop.
+    processing_window: ProcessingWindow | None = None
+    processing_window_error: str | None = None
     dqfcosy_window: DQFCOSYWindow | None = None
     dqfcosy_window_error: str | None = None
     delta: float = Field(default=0.0, init=False)
@@ -333,6 +336,8 @@ def get_shape_names(config: FitConfig, spectra: Spectra) -> list[str]:
     - If "auto", inspect detected processing parameters (params).
     """
     requested = config.lineshape
+    if config.include_window_functions and requested == "auto":
+        return ["pvoigt"] * spectra.n_spectral_dims
     if requested != "auto":
         return [requested] * spectra.n_spectral_dims
 

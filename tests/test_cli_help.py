@@ -38,3 +38,11 @@ def test_plot_spectrum_help_mentions_bruker_input() -> None:
     help_text = rendered_help("plot", "spectrum")
 
     assert "NMRPipe file or processed Bruker spectrum" in help_text
+
+
+def test_fit_help_exposes_recorded_window_option() -> None:
+    result = CliRunner().invoke(app, ["fit", "--help"], env={"COLUMNS": "180"})
+    assert result.exit_code == 0
+    help_text = strip_ansi(result.output)
+    assert "--include-window-functions" in help_text
+    assert "acquisition windows" in help_text

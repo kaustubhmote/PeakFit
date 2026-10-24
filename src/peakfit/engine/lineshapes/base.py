@@ -40,6 +40,11 @@ class ShapeBase:
         self.axis = self._grid.axis_label
         self.cluster_id = 0
         self.param_names: list[str] = []
+        self.processing_window = (
+            self._grid.spec_params.processing_window
+            if config.include_window_functions and self.shape_name != "dqfcosy"
+            else None
+        )
         self._fit_phase_axes = set(config.fit_phase)
 
     @property
@@ -69,7 +74,13 @@ class ShapeBase:
     def get_parameter_spec(self) -> list[ParamSpec]:
         """Get parameter specs for this shape."""
         context = LineshapeContext(grid=self._grid, extras=self._param_context_extras())
-        return list(self.param_specs(self.center, context))
+        specs = list(self.param_specs(self.center, context))
+        if (
+            getattr(self, "processing_window", None) is not None
+            and self.axis in self._fit_phase_axes
+        ):
+            specs.append(ParamSpec("phase", 0.0, -180.0, 180.0, "deg"))
+        return specs
 
     def _parameter_id(self, label: str) -> ParameterId | None:
         if label == self.phase_param_name:

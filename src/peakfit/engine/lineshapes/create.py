@@ -70,6 +70,9 @@ def create_shapes(
     if "dqfcosy" in shape_names and (list(shape_names) != ["dqfcosy", "dqfcosy"]):
         raise ValueError("DQF-COSY must be used on both axes of a two-dimensional spectrum.")
 
+    if config.include_window_functions:
+        _validate_processing_inputs(spectra, config, shape_names)
+
     shapes: list[Shape] = []
     for dim, (center, shape_name) in enumerate(zip(positions, shape_names, strict=False), start=1):
         shapes.append(
@@ -92,6 +95,36 @@ def _resolve_shape_provider(shape_type: str) -> Callable[..., Shape]:
         available = ", ".join(_available_shapes())
         msg = f"Unknown lineshape '{shape_type}'. Available: {available}"
         raise ValueError(msg) from exc
+
+
+def _validate_processing_inputs(
+    spectra: Spectra,
+    config: FitConfig,
+    names: Sequence[str],
+) -> None:
+    if list(names) == ["dqfcosy", "dqfcosy"]:
+        return  # DQF-COSY already owns a window-aware forward model.
+    supported = {
+        "gaussian",
+        "lorentzian",
+        "pvoigt",
+        "gaussian_doublet",
+        "lorentzian_doublet",
+        "pvoigt_doublet",
+    }
+    if set(names) - supported:
+        raise ValueError(
+            "--include-window-functions requires auto, gaussian, lorentzian, "
+            "or pvoigt intrinsic shapes, including doublets."
+        )
+    if config.use_imaginary:
+        raise ValueError("Window-aware intrinsic fitting does not support imaginary components.")
+    if spectra.n_spectral_dims not in {1, 2}:
+        raise ValueError("--include-window-functions supports one or two spectral dimensions.")
+    for spec in spectra.spectral_params:
+        if spec.processing_window is None:
+            detail = spec.processing_window_error or "missing acquisition/window metadata"
+            raise ValueError(f"Cannot include window functions on {spec.label}: {detail}.")
 
 
 __all__ = ["create_shapes"]

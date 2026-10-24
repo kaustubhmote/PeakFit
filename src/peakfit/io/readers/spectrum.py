@@ -10,6 +10,7 @@ from numpy.typing import NDArray
 from peakfit.engine.domain.config import DQFCOSYWindow
 from peakfit.engine.domain.param_id import PSEUDO_AXIS
 from peakfit.engine.domain.spectrum import Spectra, SpectralParameters, get_dimension_label
+from peakfit.engine.domain.window import ProcessingWindow, WindowKind
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -30,6 +31,7 @@ NUCLEUS_LABELS: dict[str, str] = {
     "31": "31P",
 }
 BRUKER_BINARY_NAMES = frozenset({"1r", "2rr", "3rrr", "4rrrr"})
+_BRUKER_GM = 2
 _BRUKER_EM = 1
 _BRUKER_SINE = 3
 _BRUKER_QSINE = 4
@@ -86,6 +88,15 @@ def read_spectral_parameters(dic: dict[str, Any], data: NDArray[Any]) -> list[An
                 sw = obs = car = aq_time = 1.0
                 p180 = False
 
+        processing_window = None
+        processing_error = None
+        if i > 0 and ft:
+            try:
+                processing_window = _pipe_processing_window(dic, fdf, size)
+                aq_time = processing_window.points * processing_window.dwell
+            except ValueError as error:
+                processing_error = str(error)
+
         spec_params.append(
             SpectralParameters(
                 size=size,
@@ -102,12 +113,89 @@ def read_spectral_parameters(dic: dict[str, Any], data: NDArray[Any]) -> list[An
                 ft=ft,
                 label=dim_label,
                 nucleus=nucleus,
+                processing_window=processing_window,
+                processing_window_error=processing_error,
                 td_size=_positive_int(dic.get(f"{fdf}TDSIZE")),
                 ft_size=_positive_int(dic.get(f"{fdf}FTSIZE")),
             )
         )
 
     return spec_params
+
+
+def _pipe_processing_window(dic: dict[str, Any], prefix: str, size: int) -> ProcessingWindow:
+    """Recover sampling before a standard frequency-domain EXT -sw extraction."""
+    sw = _header_number(dic, f"{prefix}SW")
+    points = _header_number(dic, f"{prefix}APOD")
+    x1 = _float_value(dic.get(f"{prefix}X1"))
+    xn = _float_value(dic.get(f"{prefix}XN"))
+    if x1 or xn:
+        ft_size = _positive_int(dic.get(f"{prefix}FTSIZE"))
+        if ft_size is None or xn < x1 or not np.isclose(xn - x1 + 1, size):
+            raise ValueError("extracted NMRPipe data requires FTSIZE and matching X1/XN")
+        ratio = ft_size / size
+        sw *= ratio
+        points *= ratio
+    if sw <= 0 or points < _MIN_TIME_POINTS or not np.isclose(points, round(points)):
+        raise ValueError("cannot recover integral acquisition points from NMRPipe APOD/SW")
+    code = _header_number(dic, f"{prefix}APODCODE")
+    kinds: dict[float, WindowKind] = {0: "none", 1: "sine", 2: "em", 3: "gm", 7: "gmb"}
+    if code not in kinds:
+        raise ValueError(f"unsupported NMRPipe APODCODE={code:g}")
+    q = [_header_number(dic, f"{prefix}APODQ{i}") for i in (1, 2, 3)]
+    if code == 1 and (not 0 <= q[0] <= q[1] <= 1 or q[2] < 0):
+        raise ValueError("unsupported sine window offsets or power")
+    # NMRPipe stores C1 as the applied multiplier minus one.
+    first = _header_number(dic, f"{prefix}C1") + 1
+    dwell = 1 / sw
+    duration = (round(points) - 1) * dwell if code in {1, 3} else round(points) * dwell
+    return ProcessingWindow(
+        kind=kinds[code],
+        points=round(points),
+        dwell=dwell,
+        duration=duration,
+        q1=q[0],
+        q2=q[1],
+        q3=q[2],
+        first_point=first,
+    )
+
+
+def _bruker_processing_window(
+    acquisition: dict[str, Any], processing: dict[str, Any], *, direct: bool
+) -> ProcessingWindow:
+    """Infer a window on acquired samples; predicted samples are deliberately excluded."""
+    if _float_value(processing.get("TDoff")) != 0:
+        raise ValueError("time-domain shifts (TDoff) are not supported")
+    points, dwell, acquired = _bruker_time_sampling(acquisition, processing, direct=direct)
+    code = _header_number(processing, "WDW")
+    kinds: dict[float, WindowKind] = {0: "none", 1: "em", 2: "gmb", 3: "sine", 4: "sine"}
+    if code not in kinds:
+        raise ValueError(f"unsupported Bruker WDW={code:g}")
+    q1 = q2 = q3 = 0.0
+    if code in {1, 2}:
+        q1 = _header_number(processing, "LB")
+    if code == _BRUKER_GM:
+        q2 = _header_number(processing, "GB")
+        if q1 >= 0 or not 0 < q2 <= 1:
+            raise ValueError("Bruker Gaussian multiplication requires LB < 0 and 0 < GB <= 1")
+    if code in {3, 4}:
+        shift = _header_number(processing, "SSB")
+        if shift < 0:
+            raise ValueError("SSB must be nonnegative")
+        q1 = 1 / shift if shift >= _MIN_SINE_SHIFT else 0.0
+        q2 = 1.0
+        q3 = 1.0 if code == _BRUKER_SINE else 2.0
+    return ProcessingWindow(
+        kind=kinds[code],
+        points=points,
+        dwell=dwell,
+        duration=acquired * dwell,
+        q1=q1,
+        q2=q2,
+        q3=q3,
+        first_point=_header_number(processing, "FCOR") if "FCOR" in processing else 0.5,
+    )
 
 
 def _is_bruker_processed_directory(path: Path) -> bool:
@@ -222,7 +310,7 @@ def _bruker_acquisition_width(acquisition: dict[str, Any]) -> float:
     return _float_value(acquisition.get("SW")) * _float_value(acquisition.get("SFO1"))
 
 
-def _bruker_number(parameters: dict[str, Any], name: str) -> float:
+def _header_number(parameters: dict[str, Any], name: str) -> float:
     value = _float_value(parameters.get(name), float("nan"))
     if not np.isfinite(value):
         raise ValueError(f"missing or invalid {name}")
@@ -238,20 +326,20 @@ def _bruker_time_sampling(
     sw = _bruker_acquisition_width(acquisition)
     if not np.isfinite(sw) or sw <= 0:
         raise ValueError("missing or invalid acquisition SW_h or SW and SFO1")
-    td = _bruker_number(acquisition, "TD")
+    td = _header_number(acquisition, "TD")
     if td <= 0 or not td.is_integer():
         raise ValueError("TD must be a positive integer")
 
     if direct:
         # Simultaneous QSIM/DQD acquisition stores interleaved real/imaginary points.
-        mode = _bruker_number(acquisition, "AQ_mod")
+        mode = _header_number(acquisition, "AQ_mod")
         if mode not in {1, 3}:
             raise ValueError("DQF-COSY requires complex QSIM or DQD direct acquisition")
         paired = True
     else:
         mode = _float_value(acquisition.get("FnMODE"))
         if mode == 0 and "MC2" in processing:
-            mode = _bruker_number(processing, "MC2") + 1
+            mode = _header_number(processing, "MC2") + 1
         if mode == 0 and processing.get("FT_mod") in _BRUKER_COMPLEX_TRANSFORMS:
             mode = 4  # The status transform establishes complex quadrature pairing.
         if mode not in _BRUKER_COMPLEX_MODES and mode != _BRUKER_TPPI:
@@ -286,7 +374,7 @@ def _bruker_dqfcosy_window(
     if _float_value(processing.get("TDoff")) != 0:
         raise ValueError("time-domain shifts (TDoff) are outside the DQF-COSY model")
     points, dwell, acquired_points = _bruker_time_sampling(acquisition, processing, direct=direct)
-    code = _bruker_number(processing, "WDW")
+    code = _header_number(processing, "WDW")
     if code not in {0, _BRUKER_EM, _BRUKER_SINE, _BRUKER_QSINE}:
         raise ValueError(f"unsupported Bruker window WDW={code:g}")
     power = 0
@@ -294,9 +382,9 @@ def _bruker_dqfcosy_window(
     end = 1.0
     lb = 0.0
     if code == _BRUKER_EM:
-        lb = _bruker_number(processing, "LB")
+        lb = _header_number(processing, "LB")
     elif code in {_BRUKER_SINE, _BRUKER_QSINE}:
-        shift = _bruker_number(processing, "SSB")
+        shift = _header_number(processing, "SSB")
         if shift < 0:
             raise ValueError("SSB must be nonnegative")
         offset = 1 / shift if shift >= _MIN_SINE_SHIFT else 0.0
@@ -341,6 +429,13 @@ def _read_bruker_spectral_parameters(
             # Defer the actionable error until that model is actually requested.
             window_error = str(error)
 
+        processing_window = None
+        processing_error = None
+        try:
+            processing_window = _bruker_processing_window(acquisition, processing, direct=direct)
+        except ValueError as error:
+            processing_error = str(error)
+
         params.append(
             SpectralParameters(
                 size=int(universal_axis.get("size", data.shape[axis_index])),
@@ -361,6 +456,8 @@ def _read_bruker_spectral_parameters(
                 nucleus=nucleus,
                 td_size=_positive_int(acquisition.get("TD")),
                 ft_size=_positive_int(processing.get("FTSIZE") or processing.get("SI")),
+                processing_window=processing_window,
+                processing_window_error=processing_error,
                 dqfcosy_window=window,
                 dqfcosy_window_error=window_error,
             )

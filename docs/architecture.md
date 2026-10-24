@@ -31,14 +31,21 @@ fit orchestration, uncertainty analysis, plotting, and output generation.
    before validation. The XML parser in `io` supplies both validation and fitting.
    Generic Bruker acquisition duration uses the acquisition sweep width, even
    when the frequency coordinates describe an extracted spectrum. Other Bruker
-   windows currently fall back to empirical pseudo-Voigt profiles; this does
-   not supply an exact Gaussian-multiplication or linear-prediction model.
+   windows fall back to empirical pseudo-Voigt profiles by default. With
+   `include_window_functions=true`, the readers attach a fixed `ProcessingWindow`
+   to each spectral axis, separately from the displayed coordinate system.
+   Linear prediction remains outside the model.
 2. `fit` validates inputs, loads spectra/peaks, prepares clusters, and runs direct fit pipeline functions.
    When no peak list is provided or discovered, `fit` delegates to the experimental `auto_pick` package instead of owning that logic.
 3. `engine` performs numerical work: clustering, lineshapes, optimizers, residuals, and statistics helpers.
    One-dimensional lineshape profiles evaluate supplied frequency offsets.
    `Cluster.evaluate_peaks` owns multidimensional peak geometry, including the
-   optional F2-F3 rotation and its analytic derivatives.
+   optional F2-F3 rotation and its analytic derivatives. Window-aware intrinsic
+   peaks use `domain.processing` to transform their time signals after
+   applying acquisition-axis windows. A tilted peak rotates the dual time
+   coordinates of its intrinsic profile, while keeping the windows on the
+   acquisition axes. The same evaluator supplies fitting, correction updates,
+   and full-grid simulation. See [processing-aware fitting](processing-aware-fitting.md).
    DQF-COSY profiles share one `F2-F3.j` parameter and have separate intrinsic
    widths and fixed processing windows. The Bruker reader derives these windows
    from acquisition and processing dictionaries; per-axis configuration overrides

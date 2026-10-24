@@ -111,8 +111,12 @@ three layers. All contours use solid strokes. Color edits redraw the existing
 paths without contour extraction or network requests.
 
 `plot.reconstruction` uses the final nonlinear parameters and retained amplitudes
-from `summary/fit.json`, matched by cluster ID and peak order to geometry in
-`metadata/fitting_state.pkl`. It evaluates complete profiles in point blocks,
+from `summary/fit.json`. Legacy results supply geometry in
+`metadata/fitting_state.pkl`, matched by cluster ID and peak order. Regional
+exports supply `metadata/extraction.json`; the viewer verifies the original
+source grid, restores its crop and series order, and creates shapes using the
+saved processing metadata and selected models. This needs no continuation state
+or refitting. It evaluates complete profiles in point blocks,
 including tails and tilted peaks. It excludes unusable outcomes and checks the
 input ppm grid and plane count before serving. The residual is experimental minus
 simulated, and all layers share signed contour levels. The current viewer supports

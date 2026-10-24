@@ -699,3 +699,71 @@ def _file_input(path, direct_axis, series_axis, series, extra) -> SpectrumInput:
         loading,
         source_path=str(resolved),
     )
+
+
+def read_extracted_spectrum(source_path: Path, extraction_path: Path) -> Spectra:
+    """Reload a saved region from its source, without fitting or continuation state.
+
+    The stored slices select samples; stored frequency metadata must agree with
+    the native source at those exact samples before any model can be displayed.
+    """
+    import json  # noqa: PLC0415
+
+    from peakfit.io.readers.spectrum import read_spectra  # noqa: PLC0415
+
+    saved = json.loads(extraction_path.read_text())["extraction"]
+    original = read_spectra(source_path)
+    raw = original.data[0] if original.pseudo_dim_added else original.data
+    if tuple(raw.shape) != tuple(saved["original_shape"]):
+        raise ValueError("Source spectrum shape does not match the saved extraction.")
+    permutation = tuple(saved["axis_permutation"])
+    if sorted(permutation) != list(range(raw.ndim)):
+        raise ValueError("Saved extraction has an invalid axis permutation.")
+    slices = tuple(slice(item["start"], item["stop"]) for item in saved["original_slices"])
+    if any(item.get("step") not in {None, 1} for item in saved["original_slices"]):
+        raise ValueError("Saved extraction source slices must have unit stride.")
+    if len(slices) != raw.ndim or any(
+        item.start < 0 or item.stop > size or item.start >= item.stop
+        for item, size in zip(slices, raw.shape, strict=True)
+    ):
+        raise ValueError("Saved extraction contains invalid source slices.")
+    udic = {
+        int(key) if key != "ndim" else key: value for key, value in saved["cropped_udic"].items()
+    }
+    for axis in saved["axes"]:
+        external = axis["external_axis"]
+        native_param = original.params[external + int(original.pseudo_dim_added)]
+        meta = udic[external]
+        native_indices = np.array([slices[external].start, slices[external].stop - 1], dtype=float)
+        first = meta["car"] / meta["obs"] + meta["sw"] / (2 * meta["obs"])
+        last = first - (meta["size"] - 1) * meta["sw"] / (meta["size"] * meta["obs"])
+        if native_param.nucleus != meta["label"] or not np.allclose(
+            native_param.pts2ppm(native_indices), [first, last], rtol=0, atol=PPM_TOLERANCE
+        ):
+            raise ValueError(f"Source frequency grid does not match saved axis {external}.")
+    external_axes = {axis["external_axis"] for axis in saved["axes"]}
+    remaining = set(range(raw.ndim)) - external_axes
+    if len(remaining) > 1:
+        raise ValueError("Saved extraction has more than one series axis.")
+    series_axis = next(iter(remaining)) if remaining else None
+    series = SeriesAxis(**saved["series"]) if saved["series"] is not None else None
+    selected = raw[slices]
+    if series_axis is not None:
+        selected = np.take(selected, saved["series_indices"], axis=series_axis)
+    processing = {
+        int(axis): AxisProcessing.model_validate(values)
+        for axis, values in saved["processing"].items()
+    }
+    source = SpectrumInput.from_array(
+        selected,
+        udic,
+        direct_axis=permutation[-1],
+        series_axis=series_axis,
+        series=series,
+        processing=processing,
+    )
+    extracted = extract_spectrum(source)
+    for axis, param in zip(saved["axes"], extracted.spectra.spectral_params, strict=True):
+        param.alias_size = raw.shape[axis["external_axis"]]
+    extracted.spectra.dic["_peakfit_format"] = saved["source_format"]
+    return extracted.spectra

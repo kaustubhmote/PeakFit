@@ -233,7 +233,22 @@ contains source headers, cropped metadata, coordinate mapping, series units and
 IDs, seeds, model decisions, and diagnostics. Native byte fields are encoded as
 hex records. No continuation pickle is required. With `config.output.save_simulated`,
 `simulated_region.npz` contains cropped simulation and residual arrays. It is a
-numeric export, not a new input file format or a browser continuation artifact.
+numeric export, not a new spectrum input format.
+
+For two-frequency data, view an exported fit against its original supported
+spectrum file:
+
+```bash
+peakfit plot spectrum --spectrum ./spectrum.ft2 --results ./regional-fit
+```
+
+The browser restores the recorded crop and series order, then evaluates the
+final summary's parameters and amplitudes. It offers experimental, simulated,
+and residual layers without refitting or a continuation pickle. The source file
+must have the original shape and frequency grid. Array-only exports need a
+matching supported source file to use this viewer. The browser supports two
+frequency dimensions with optional series planes; true three-frequency browsing
+is not supported. The viewer currently loads the full source before slicing.
 
 ## Resources, progress, and cancellation
 

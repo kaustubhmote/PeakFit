@@ -34,6 +34,8 @@ from peakfit.engine.domain.config import DQFCOSYWindow
 from peakfit.engine.domain.params_scalar import Parameters
 from peakfit.fit import api as implementation
 from peakfit.fit import pipeline
+from peakfit.plot import spectra_viewer
+from peakfit.plot.reconstruction import SpectraReconstructor
 
 
 def synthetic(ndim=2, dtype=np.float64, ratios=None):
@@ -768,3 +770,93 @@ def test_cancellation_after_optimizer_progress_never_exports(tmp_path):
         )
     assert "FitResult" in seen
     assert not (tmp_path / "results").exists()
+
+
+def test_plot_regional_results_without_pickle_uses_final_values(tmp_path, monkeypatch):
+    data, udic, positions = synthetic(2, np.float32)
+    filename = tmp_path / "spectrum.ucsf"
+    sparky.write(str(filename), sparky.create_dic(udic), data, overwrite=True)
+    source = SpectrumInput.from_file(filename, direct_axis=1)
+    cfg = config()
+    cfg.fitting.tilted = True
+    result = fit_spectrum(
+        source,
+        peaks=[PeakSeed("p", positions)],
+        region_ppm=region(udic),
+        config=cfg,
+        output_dir=tmp_path / "fit",
+    )
+    expected = result.simulate()
+    assert expected is not None
+    assert not list((tmp_path / "fit").rglob("*.pkl"))
+    captured = {}
+
+    def serve(data_exp, reconstructor, peaks, **_kwargs):
+        viewer = spectra_viewer.SpectrumViewer(data_exp, reconstructor, peaks)
+        captured["shape"] = data_exp.data.shape
+        captured["simulated"] = viewer.plane(0, "simulated")
+        captured["residual"] = viewer.plane(0, "residual")
+        captured["noise"] = viewer.noise
+        captured["metadata"] = viewer.metadata()
+
+    monkeypatch.setattr(spectra_viewer, "serve_viewer", serve)
+    viewed = CliRunner().invoke(
+        app,
+        [
+            "plot",
+            "spectrum",
+            "--spectrum",
+            str(filename),
+            "--results",
+            str(tmp_path / "fit"),
+            "--no-browser",
+        ],
+    )
+    assert viewed.exit_code == 0, viewed.output
+    assert captured["shape"] == expected.shape
+    np.testing.assert_allclose(captured["simulated"], expected[0], atol=1e-10)
+    residual = result.residual()
+    assert residual is not None
+    np.testing.assert_allclose(captured["residual"], residual[0], atol=1e-10)
+    assert captured["noise"] == result.outcome.noise
+    assert captured["metadata"]["peaks"][0]["name"] == "p"
+
+
+def test_region_viewer_checks_source_grid_and_restores_series_order(tmp_path):
+    data, udic, positions = synthetic(2, np.float32, ratios=(1, 2, 3, 4))
+    data = data.transpose(1, 0, 2)
+    series_metadata = dict(udic[0])
+    series_metadata["encoding"] = "array"
+    udic = {"ndim": 3, 0: udic[1], 1: series_metadata, 2: udic[2]}
+    positions = {0: positions[1], 2: positions[2]}
+    native = pipe.create_dic(udic)
+    native["FDPIPEFLAG"] = 1
+    filename = tmp_path / "series.ft3"
+    pipe.write(str(filename), native, data, overwrite=True)
+    series = SeriesAxis((20, 10, 20, 5), "ms", "relaxation", ("a", "b", "replicate-a", "c"))
+    source = SpectrumInput.from_file(filename, series_axis=1, series=series)
+    cfg = config()
+    cfg.exclude_planes = [1]
+    result = fit_spectrum(
+        source,
+        peaks=[PeakSeed("p", positions)],
+        region_ppm=region(source.udic, 1),
+        config=cfg,
+        output_dir=tmp_path / "fit",
+    )
+    expected = result.simulate()
+    assert expected is not None
+    rec = SpectraReconstructor(tmp_path / "fit")
+    restored = rec.load_region(filename)
+    viewer = spectra_viewer.SpectrumViewer(
+        spectra_viewer.NMRData.from_spectra(str(filename), restored), rec
+    )
+    assert viewer.data.data.shape == expected.shape
+    np.testing.assert_array_equal(restored.z_values, [20, 20, 5])
+    for plane in range(expected.shape[0]):
+        np.testing.assert_allclose(viewer.plane(plane, "simulated"), expected[plane], atol=1e-10)
+    native["FDF2ORIG"] += 100
+    wrong = tmp_path / "different-grid.ft3"
+    pipe.write(str(wrong), native, data, overwrite=True)
+    with pytest.raises(ValueError, match="frequency grid"):
+        SpectraReconstructor(tmp_path / "fit").load_region(wrong)

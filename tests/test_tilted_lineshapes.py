@@ -538,6 +538,7 @@ def test_spectrum_reconstruction_does_not_clip_a_tilted_peak(tmp_path: Path) -> 
     reconstructor = object.__new__(SpectraReconstructor)
     reconstructor.results_dir = tmp_path
     reconstructor._state = state
+    reconstructor._parameters = params
     reconstructor._cluster_all = cluster
     reconstructor._amplitudes = np.array([[2.0]])
 
@@ -718,6 +719,7 @@ def test_spectrum_reconstruction_retains_lorentzian_tails(tmp_path: Path) -> Non
     reconstructor = object.__new__(SpectraReconstructor)
     reconstructor.results_dir = tmp_path
     reconstructor._state = state
+    reconstructor._parameters = params
     reconstructor._cluster_all = cluster
     reconstructor._amplitudes = np.array([[2.0]])
     actual = reconstructor.reconstruct_plane(0, (101, 101))

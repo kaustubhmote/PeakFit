@@ -114,7 +114,7 @@ Use `--no-sync` only with an already synchronized uv environment.
 Run the Python tests for contour geometry, HTTP delivery, reconstruction, and CLI loading:
 
 ```bash
-uv run pytest tests/test_browser_spectrum_viewer.py tests/test_spectra_viewer_loading.py tests/test_tilted_lineshapes.py tests/test_dqfcosy.py
+uv run pytest tests/test_browser_spectrum_viewer.py tests/test_spectra_viewer_loading.py tests/test_tilted_lineshapes.py tests/test_dqfcosy.py tests/test_headless_api.py
 ```
 
 With Node.js available, run the browser control tests without npm dependencies:

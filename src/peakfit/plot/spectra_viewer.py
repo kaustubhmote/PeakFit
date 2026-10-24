@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 
     import pandas as pd
 
-    from peakfit.engine.domain.spectrum import SpectralParameters
+    from peakfit.engine.domain.spectrum import Spectra, SpectralParameters
     from peakfit.plot.reconstruction import SpectraReconstructor
     from peakfit.shared.typing import FloatArray
 
@@ -53,7 +53,11 @@ class NMRData:
     @classmethod
     def from_file(cls, filename: str) -> Self:
         """Load an NMRPipe file or processed Bruker spectrum."""
-        spectra = read_spectra(Path(filename))
+        return cls.from_spectra(filename, read_spectra(Path(filename)))
+
+    @classmethod
+    def from_spectra(cls, filename: str, spectra: Spectra) -> Self:
+        """Keep a normalized region's exact coordinate grid and axis identities."""
         data, xlim, ylim = cls._process_data(spectra.data, spectra.spectral_params)
         y_axis, x_axis = spectra.spectral_params
         return cls(
@@ -107,7 +111,7 @@ class SpectrumViewer:
         sample = sample[np.isfinite(sample)]
         if not sample.size:
             raise ValueError("Spectrum contains no finite intensity values.")
-        noise = reconstructor.state.noise if reconstructor else None
+        noise = reconstructor.noise if reconstructor else None
         self.noise = float(noise) if noise and noise > 0 else float(estimate_noise(sample))
         # A noiseless or constant spectrum still needs a positive contour base.
         if not np.isfinite(self.noise) or self.noise <= 0:

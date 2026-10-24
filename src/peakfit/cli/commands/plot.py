@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from typing import Any
 
+    from peakfit.engine.domain.spectrum import Spectra
     from peakfit.plot.outputs import PlotOutput
 
 
@@ -197,8 +198,15 @@ def plot_spectrum(
     try:
         from peakfit.plot.spectra_viewer import serve_viewer  # noqa: PLC0415
 
-        data_exp = _load_spectrum(spectrum)
         reconstructor = _init_reconstructor(results)
+        region = (
+            reconstructor.load_region(spectrum)
+            if reconstructor and reconstructor.has_region
+            else None
+        )
+        data_exp = (
+            _load_spectrum(spectrum, region) if region is not None else _load_spectrum(spectrum)
+        )
         plist = _extract_peaks(reconstructor, data_exp)
 
         def ready(url: str) -> None:
@@ -397,12 +405,16 @@ def plot_mcmc(
 # === Helpers ===
 
 
-def _load_spectrum(path: Path) -> Any:
+def _load_spectrum(path: Path, spectra: Spectra | None = None) -> Any:
     """Load NMR spectrum data."""
     try:
         from peakfit.plot.spectra_viewer import NMRData  # noqa: PLC0415
 
-        return NMRData.from_file(str(path))
+        return (
+            NMRData.from_spectra(str(path), spectra)
+            if spectra is not None
+            else NMRData.from_file(str(path))
+        )
     except Exception as e:
         show_error_with_details("loading spectrum", e)
         raise typer.Exit(1) from e
@@ -431,7 +443,7 @@ def _extract_peaks(reconstructor: Any | None, data_exp: Any) -> Any | None:
         return None
 
     try:
-        peaks = reconstructor.state.peaks
+        peaks = reconstructor.peaks
         peaks_data = [
             {"name": p.name, "y0_ppm": float(p.positions[0]), "x0_ppm": float(p.positions[1])}
             for p in peaks
@@ -442,7 +454,8 @@ def _extract_peaks(reconstructor: Any | None, data_exp: Any) -> Any | None:
             return None
 
         plist = pd.DataFrame(peaks_data)
-        plist["y0_ppm"] = data_exp.unalias_y(plist["y0_ppm"].to_numpy().astype(np.float32))
+        if not reconstructor.has_region:
+            plist["y0_ppm"] = data_exp.unalias_y(plist["y0_ppm"].to_numpy().astype(np.float32))
         return plist
 
     except Exception as e:

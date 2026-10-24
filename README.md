@@ -233,7 +233,9 @@ of 1.4. All layers share the same levels. The previous spectrum stays visible
 while new heights load, including after manual base edits and multiplier changes.
 Changing the multiplier or entering an arbitrary base can change every height;
 only heights already calculated are reused. Simulated and residual layers require
-`--results` with `summary/fit.json` and `metadata/fitting_state.pkl`. The viewer
+`--results` with `summary/fit.json` and either `metadata/fitting_state.pkl` or
+the regional export's `metadata/extraction.json`. For regional results, pass the
+original spectrum; the viewer restores the saved crop and series order. It
 checks that the spectrum grid and plane count match the fit. It evaluates final
 saved parameters and amplitudes without clipping peak tails. For joint quadrature
 fits, the viewer currently displays the real `rr` plane.

@@ -88,6 +88,7 @@ type = "layers"
 layers = [
   "__main__",
   "cli",
+  "api",
   "ui",
   "fit",
   "auto_pick",

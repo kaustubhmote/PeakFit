@@ -63,6 +63,7 @@ class DimensionContext:
     ppm2pt_i: Callable[[float], int]
     pts2hz_delta: Callable[[FloatArray], FloatArray]
     ppm2hz: Callable[[FloatArray], FloatArray]
+    alias_size: int | None = None
 
     def compute_offsets(
         self,
@@ -96,8 +97,9 @@ class DimensionContext:
 
         if not self.is_direct:
             # Apply aliasing correction for indirect dimensions
-            aliasing = (dx_pt + 0.5 * self.size) // self.size
-            dx_pt = dx_pt - self.size * aliasing
+            period = self.alias_size or self.size
+            aliasing = (dx_pt + 0.5 * period) // period
+            dx_pt = dx_pt - period * aliasing
 
             # P180 causes sign alternation with aliasing
             if self.has_p180:

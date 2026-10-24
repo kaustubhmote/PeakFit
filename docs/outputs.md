@@ -104,3 +104,11 @@ Post-fit commands and `ResultsLoader` expect the run output directory
   README/state companions, and optional simulated spectra.
 - The fixed layout is the output contract.
 - Per-plane amplitudes are exported only in `tables/intensities.csv`.
+## Headless regional exports
+
+The [Python interface](python-api.md) uses the same canonical JSON and CSV writers.
+It also writes `metadata/extraction.json` with source/crop coordinates, axis and
+series identity, seed decisions, processing provenance, and model availability.
+Regional exports do not require continuation pickle files. Optional
+`simulated_region.npz` arrays use the cropped internal series/frequency layout
+described by the sidecar and do not allocate the original spectrum grid.

@@ -138,6 +138,7 @@ def auto_pick_peaks(
     contour_level: float,
     config: PeakFitConfig,
     cycle_callback: AutoPickCycleCallback | None = None,
+    cancel_check: Callable[[], None] | None = None,
 ) -> AutoPickResult:
     """Automatically pick peaks from spectra using iterative ROI fitting."""
     if noise <= 0:
@@ -162,6 +163,8 @@ def auto_pick_peaks(
     iteration = 1
 
     while iteration <= auto_cfg.max_clusters:
+        if cancel_check is not None:
+            cancel_check()
         seed_point, seed_height = _find_global_seed(working_data, blocked_mask=processed_mask)
         if seed_point is None:
             break

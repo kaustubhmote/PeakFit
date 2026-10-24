@@ -94,6 +94,21 @@ Documentation should be consolidated with code changes. Prefer one accurate page
 over several overlapping pages. Delete stale notes when they stop matching the
 current design.
 
+## Check headless regional fitting
+
+The generated fixtures require no experimental datasets or downloads:
+
+```bash
+uv run --no-sync pytest -q tests/test_headless_api.py
+QT_QPA_PLATFORM=offscreen MPLBACKEND=Agg uv run --no-sync pytest -q --ignore=tests/integration
+uv run --no-sync python examples/python-api/fit_array.py
+uv run --no-sync python examples/python-api/fit_series.py
+```
+
+The integration directory uses experimental example spectra. Excluding it keeps
+the second command restricted to synthetic fixtures and unit regressions.
+Use `--no-sync` only with an already synchronized uv environment.
+
 ## Check the browser spectrum viewer
 
 Run the Python tests for contour geometry, HTTP delivery, reconstruction, and CLI loading:

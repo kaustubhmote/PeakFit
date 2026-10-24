@@ -65,10 +65,13 @@ def group_connected_pairs(pairs: Iterable[tuple[int, int]]) -> list[list[int]]:
     return [sorted(g) for g in groups.values()]
 
 
-def merge_connected_segments(segments: IntArray) -> IntArray:
+def merge_connected_segments(
+    segments: IntArray,
+    periodic_axes: Sequence[int] | None = None,
+) -> IntArray:
     """Merge connected segments in a labeled array (handling wrapping)."""
     # Iterate over each dimension to check for wrapping (first/last index connectivity)
-    for axis in range(segments.ndim):
+    for axis in range(segments.ndim) if periodic_axes is None else periodic_axes:
         segs_moved = np.moveaxis(segments, axis, 0)
         seg0 = segs_moved[0]
         segn = segs_moved[-1]
@@ -99,6 +102,7 @@ def segment_data(
     data: FloatArray,
     contour_level: float,
     peaks: Sequence[PeakLike],
+    periodic_axes: Sequence[int] | None = None,
 ) -> IntArray:
     """Segment the spectral data based on the contour level."""
     # 1. Threshold Mask
@@ -131,7 +135,7 @@ def segment_data(
     labeled_segments, _ = label(data_selected, structure=structuring_element)
 
     # 5. Merge Wrapping Segments
-    return merge_connected_segments(np.asarray(labeled_segments, dtype=int))
+    return merge_connected_segments(np.asarray(labeled_segments, dtype=int), periodic_axes)
 
 
 def assign_peaks_to_segments(peaks: list[Peak], segments: IntArray) -> dict[int, list[Peak]]:
@@ -150,7 +154,14 @@ def assign_peaks_to_segments(peaks: list[Peak], segments: IntArray) -> dict[int,
 
 def create_clusters(spectra: Spectra, peaks: list[Peak], contour_level: float) -> list[Cluster]:
     """Create clusters from spectral data based on peaks and contour levels."""
-    segments = segment_data(spectra.data, contour_level, peaks)
+    # A cropped edge is not a folding boundary. Preserve wrapping only on axes
+    # whose full stored period is present.
+    periodic_axes = [
+        axis
+        for axis, param in enumerate(spectra.spectral_params)
+        if getattr(param, "alias_size", None) in {None, param.size}
+    ]
+    segments = segment_data(spectra.data, contour_level, peaks, periodic_axes)
     peak_segments_dict = assign_peaks_to_segments(peaks, segments)
 
     clusters: list[Cluster] = []

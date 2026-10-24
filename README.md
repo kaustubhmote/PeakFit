@@ -1,5 +1,9 @@
 # PeakFit
 
+For fitting NumPy arrays or ppm regions without temporary input files, use the
+[headless Python interface](docs/python-api.md). It supports one to three
+frequency dimensions, optional ordered series, and the existing fitting models.
+
 PeakFit is a Python package and CLI for fitting lineshape models to pseudo-ND NMR
 spectra.
 

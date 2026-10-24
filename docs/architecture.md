@@ -13,6 +13,7 @@ fit orchestration, uncertainty analysis, plotting, and output generation.
 
 ## Current Package Map
 
+- `src/peakfit/api.py` - stable public imports for headless Python fitting.
 - `src/peakfit/cli/` - Typer command-line entrypoints and terminal presentation.
 - `src/peakfit/ui/` - Rich terminal helpers used by the current CLI.
 - `src/peakfit/fit/` - validation, data loading, fitting workflow, result assembly, and output coordination.
@@ -58,6 +59,29 @@ fit orchestration, uncertainty analysis, plotting, and output generation.
    and projects the outcome into structured artifacts.
 5. `mcmc` and `plot` run post-fit workflows from canonical fit outputs.
 6. `ui` renders terminal output where the CLI needs it.
+
+## Headless regional fitting
+
+`api` exposes typed external inputs, preparation, and completed results.
+`io.spectrum_input` validates array/UDIC axes, reads native file metadata, plans
+all-frequency-axis slices, and copies the selected region. Native headers remain
+source metadata. Cropped coordinate metadata and acquisition history stay separate.
+NMRPipe/UCSF bounded readers defer supported data access; Bruker reports full loading.
+
+`fit.api` maps external-axis seeds, checks processing capabilities, selects noise,
+and calls the same `prepare_data` and `fit_data` functions as the legacy file workflow.
+These functions replace the path-only preparation seam without adding another
+optimizer or result model. `FinalFitOutcome` remains authoritative. Completed API
+results retain detached cropped data and verified simulation geometry; canonical
+writers receive final values directly, without a continuation pickle requirement.
+
+The optional original-period field preserves indirect-axis physics and zero-fill
+fractions after extraction. Clustering wraps only axes whose full stored period
+is present. Existing uncropped defaults retain their behavior. Regional CLI options
+reuse the public interface, while ordinary CLI runs retain their existing workflow.
+
+See [the Python interface](python-api.md) for metadata, ownership, uncertainty, and
+compatibility contracts.
 
 ## Browser spectrum viewer
 

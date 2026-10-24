@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
 import numpy as np
-from nmrglue.fileio import bruker, pipe
+from nmrglue.fileio import bruker, pipe, sparky
 from numpy.typing import NDArray
 
 from peakfit.engine.domain.config import DQFCOSYWindow
@@ -377,7 +377,7 @@ def _read_bruker(
         if binary_name is None
         else bruker.read_pdata(str(path), bin_files=[binary_name])
     )
-    original_data = np.asarray(original_data, dtype=np.float32)
+    original_data = np.asarray(original_data)
     udic = bruker.guess_udic(dic, original_data, strip_fake=True)
 
     first_processing = dic.get(_bruker_axis_key("proc", original_data.ndim, 0), {})
@@ -402,6 +402,33 @@ def read_spectra(
     resolved_path = resolve_spectrum_path(path_spectra)
     if resolved_path.is_dir():
         dic, data, params, pseudo_dim_added = _read_bruker(resolved_path)
+    elif resolved_path.suffix.lower() in {".ucsf", ".sparky"}:
+        dic, original = sparky.read(str(resolved_path))
+        udic = sparky.guess_udic(dic, original)
+        data = original[None, ...]
+        params = [_pseudo_parameters(1)]
+        for axis in range(original.ndim):
+            meta = udic[axis]
+            params.append(
+                SpectralParameters(
+                    size=meta["size"],
+                    sw=meta["sw"],
+                    obs=meta["obs"],
+                    car=meta["car"],
+                    aq_time=0,
+                    apocode=-1,
+                    apodq1=0,
+                    apodq2=0,
+                    apodq3=0,
+                    p180=False,
+                    direct=axis == original.ndim - 1,
+                    ft=True,
+                    label=get_dimension_label(axis),
+                    nucleus=meta["label"],
+                )
+            )
+        dic["_peakfit_format"] = "ucsf"
+        pseudo_dim_added = True
     else:
         dic, data = pipe.read(resolved_path)
         data = data.astype(np.float32)

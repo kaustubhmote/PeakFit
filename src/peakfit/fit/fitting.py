@@ -49,6 +49,7 @@ if TYPE_CHECKING:
 
     from peakfit.auto_pick.types import AutoPickCycleReport
     from peakfit.engine.domain.config import PeakFitConfig
+    from peakfit.engine.domain.peaks import Peak
     from peakfit.engine.domain.spectrum import Spectra
     from peakfit.shared.reporter import Reporter
 
@@ -80,10 +81,20 @@ def load_data(
     """
     # 1. Load Spectra
     spectra = _load_spectra(spectrum_path, z_values_path, config, reporter)
+    return prepare_data(
+        spectra,
+        config,
+        peaklist_path=peaklist_path,
+        reporter=reporter,
+        auto_pick_callback_builder=auto_pick_callback_builder,
+    )
+
+
+def _validate_fit_dimensions(spectra: Spectra, config: PeakFitConfig, has_seeds: bool) -> None:
     if config.fitting.lineshape == "dqfcosy":
         if spectra.n_spectral_dims != _TILTED_SPECTRAL_DIMENSIONS or config.fitting.tilted:
             raise DataIOError("DQF-COSY requires two spectral dimensions and tilted=false.")
-        if peaklist_path is None:
+        if not has_seeds:
             raise DataIOError(
                 "DQF-COSY requires a peak list marking the centers of the four lobes."
             )
@@ -93,16 +104,35 @@ def load_data(
             f"input has {spectra.n_spectral_dims}."
         )
 
+
+def prepare_data(
+    spectra: Spectra,
+    config: PeakFitConfig,
+    *,
+    peaks: list[Peak] | None = None,
+    peaklist_path: Path | None = None,
+    shape_names: list[str] | None = None,
+    reporter: Reporter | None = None,
+    auto_pick_callback_builder: AutoPickCallbackBuilder | None = None,
+    cancel_check: Callable[[], None] | None = None,
+) -> LoadedData:
+    """Prepare native or normalized in-memory data through one scientific path."""
+    _validate_fit_dimensions(spectra, config, peaks is not None or peaklist_path is not None)
+
     # 2. Estimate Noise
     computed_noise = prepare_noise_level(config.noise_level, spectra)
-    if computed_noise is None:
-        raise DataIOError("Could not estimate noise level.")
+    if computed_noise is None or not np.isfinite(computed_noise) or computed_noise <= 0:
+        raise DataIOError(
+            "Could not estimate positive finite noise; supply an explicit noise level."
+        )
 
     noise_val = float(computed_noise)
     noise_source = "user-provided" if config.noise_level and config.noise_level > 0 else "estimated"
 
     # 3. Detect Lineshapes
-    shape_names = get_shape_names(config.fitting, spectra)
+    shape_names = (
+        shape_names if shape_names is not None else get_shape_names(config.fitting, spectra)
+    )
 
     # 4. Contour Level
     contour = (
@@ -112,7 +142,10 @@ def load_data(
     )
 
     # 5. Load or Auto-Pick Peaks
-    if peaklist_path is None:
+    if peaks is not None:
+        if peaklist_path is not None:
+            raise DataIOError("Supply in-memory peaks or a peak list, not both.")
+    elif peaklist_path is None:
         if not config.auto_peak.enabled:
             raise DataIOError("No peak list provided and automatic peak picking is disabled.")
         if reporter is not None:
@@ -140,6 +173,7 @@ def load_data(
             # A cycle callback enables interactive candidate selection. A reporter
             # alone must not change the automatic algorithm's control flow.
             cycle_callback=_cycle_callback if user_cycle_callback is not None else None,
+            **({"cancel_check": cancel_check} if cancel_check is not None else {}),
         )
         peaks = auto_result.peaks
         if reporter is not None:
@@ -161,6 +195,9 @@ def load_data(
             )
     else:
         peaks = read_list(peaklist_path, spectra, shape_names, config.fitting)
+
+    if not peaks:
+        raise DataIOError("No usable peak seeds remain for fitting.")
 
     # 6. Create Clusters
     clusters = create_clusters(spectra, peaks, contour)
@@ -259,12 +296,38 @@ def run_fit(
     reporter: Reporter | None = None,
     progress_callback: Callable[[Any], None] | None = None,
 ) -> FitRun:
+    """Fit prepared data and attach the caller's optional-export destination."""
+    result = fit_data(
+        data,
+        config,
+        optimizer=optimizer,
+        workers=workers,
+        reporter=reporter,
+        progress_callback=progress_callback,
+    )
+    return FitRun(
+        result.final_outcome,
+        result.continuation_state,
+        output_dir,
+        data.spectra,
+        result.simulation_snapshot,
+    )
+
+
+def fit_data(
+    data: LoadedData,
+    config: PeakFitConfig,
+    *,
+    optimizer: str = "varpro",
+    workers: int = -1,
+    reporter: Reporter | None = None,
+    progress_callback: Callable[[Any], None] | None = None,
+) -> PipelineResult:
     """Execute the fitting pipeline.
 
     Args:
         data: Loaded spectrum, peaks, clusters, etc.
         config: Fitting configuration
-        output_dir: Directory for outputs
         optimizer: Optimizer name (varpro or basin_hopping)
         workers: Number of parallel workers (-1 = all CPUs)
         reporter: Optional reporter for headless progress
@@ -272,7 +335,7 @@ def run_fit(
             Receives ProgressStart at start, then FitResult for each fit.
 
     Returns:
-        FitRun with fitting state, results, and summary
+        PipelineResult with immutable final outcome and simulation geometry
     """
     logger = logging.getLogger("peakfit")
     prev_level = logger.level
@@ -297,13 +360,7 @@ def run_fit(
         if pipeline_result is None:
             raise RuntimeError("Pipeline produced no result")
 
-        return FitRun(
-            outcome=pipeline_result.final_outcome,
-            continuation_state=pipeline_result.continuation_state,
-            output_dir=output_dir,
-            spectra=data.spectra,
-            simulation_snapshot=pipeline_result.simulation_snapshot,
-        )
+        return pipeline_result
     finally:
         logger.setLevel(prev_level)
 

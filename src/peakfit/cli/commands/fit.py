@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any, cast
 
 import typer
 
@@ -37,6 +37,7 @@ if TYPE_CHECKING:
     from peakfit.engine.domain.config import PeakFitConfig
     from peakfit.engine.domain.peaks import Peak
     from peakfit.fit.fitting import LoadedData
+    from peakfit.io.spectrum_input import SeriesKind, SeriesUnit
     from peakfit.shared.reporter import Reporter
     from peakfit.ui.auto_pick_stepper import AutoPickStepController
 
@@ -78,6 +79,30 @@ def fit_command(
         Path | None,
         typer.Option("--output", "-o", help="Output directory", file_okay=False, resolve_path=True),
     ] = None,
+    region_ppm: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--region-ppm",
+            help="External ndarray axis:LOW:HIGH ppm; repeat for every frequency axis",
+        ),
+    ] = None,
+    direct_axis: Annotated[
+        int | None,
+        typer.Option(
+            "--direct-axis",
+            help="External acquisition axis for regional fitting; required for UCSF",
+        ),
+    ] = None,
+    series: Annotated[
+        str | None,
+        typer.Option("--series", help="Regional series AXIS:KIND:UNIT, with --z-values"),
+    ] = None,
+    halo_points: Annotated[
+        int,
+        typer.Option(
+            "--halo-points", help="Regional padding in sampled points per frequency axis", min=0
+        ),
+    ] = 0,
     config: Annotated[
         Path | None,
         typer.Option(
@@ -202,12 +227,7 @@ def fit_command(
         if candidate.is_file():
             peaklist = candidate
 
-    validation = validate_inputs(spectrum, peaklist)
-    if validation.errors:
-        error("Validation failed. Fix the errors below before fitting.")
-        for e in validation.errors:
-            bullet(str(e), style="error")
-        raise typer.Exit(1)
+    _validate_fit_inputs(spectrum, peaklist, region_ppm is not None)
 
     fit_config = build_fit_config(
         config=config,
@@ -228,6 +248,26 @@ def fit_command(
         use_imaginary=use_imaginary,
         imaginary=imaginary,
     )
+
+    if region_ppm is not None:
+        _fit_region(
+            spectrum,
+            peaklist,
+            z_values,
+            fit_config,
+            region_ppm,
+            direct_axis,
+            series,
+            halo_points,
+            optimizer,
+            workers,
+            auto_pick_step,
+            reporter,
+        )
+        return
+    if direct_axis is not None or series is not None or halo_points:
+        error("--direct-axis, --series, and --halo-points require --region-ppm.")
+        raise typer.Exit(1)
 
     if fit_config.output.headless:
         _show_headless_command_summary(
@@ -303,6 +343,16 @@ def fit_command(
     except Exception as e:
         show_error_with_details("Fitting", e)
         raise typer.Exit(1) from e
+
+
+def _validate_fit_inputs(spectrum: Path, peaklist: Path | None, regional: bool) -> None:
+    # Do not materialize the full data during regional input validation.
+    validation = validate_inputs(spectrum, peaklist) if not regional else None
+    if validation is not None and validation.errors:
+        error("Validation failed. Fix the errors below before fitting.")
+        for e in validation.errors:
+            bullet(str(e), style="error")
+        raise typer.Exit(1)
 
 
 def _show_headless_command_summary(
@@ -521,3 +571,73 @@ def _format_review_clusters(reviews: list[ClusterReview]) -> list[dict[str, Any]
         )
 
     return formatted
+
+
+def _fit_region(
+    spectrum: Path,
+    peaklist: Path | None,
+    z_values: Path | None,
+    config: PeakFitConfig,
+    regions: list[str],
+    direct_axis: int | None,
+    series_spec: str | None,
+    halo_points: int,
+    optimizer: str,
+    workers: int,
+    auto_pick_step: bool,
+    reporter: Reporter,
+) -> None:
+    """Use the public headless preparation path for an explicitly selected region."""
+    import numpy as np  # noqa: PLC0415
+
+    from peakfit.api import SeriesAxis, fit_file  # noqa: PLC0415
+
+    try:
+        if auto_pick_step:
+            raise ValueError(
+                "Regional fitting supports headless automatic picking, without GUI steps."
+            )
+        bounds = {}
+        for item in regions:
+            axis_text, low, high = item.split(":")
+            axis = int(axis_text)
+            if axis in bounds:
+                raise ValueError(f"Duplicate region for external axis {axis}.")
+            bounds[axis] = (float(low), float(high))
+        series_axis = None
+        series_values = None
+        if series_spec is not None:
+            axis_text, kind, unit = series_spec.split(":")
+            series_axis = int(axis_text)
+            if z_values is None:
+                raise ValueError("--series requires --z-values.")
+            series_values = SeriesAxis(
+                tuple(np.atleast_1d(np.loadtxt(z_values))),
+                cast("SeriesUnit", unit),
+                cast("SeriesKind", kind),
+            )
+        elif z_values is not None:
+            raise ValueError("Regional --z-values requires --series AXIS:KIND:UNIT.")
+        output_dir = resolve_output_dir(config)
+        result = fit_file(
+            spectrum,
+            direct_axis=direct_axis,
+            series_axis=series_axis,
+            series=series_values,
+            peaklist_path=peaklist,
+            region_ppm=bounds,
+            config=config,
+            auto_pick=peaklist is None and config.auto_peak.enabled,
+            halo_points=halo_points,
+            optimizer=optimizer,
+            workers=max(1, workers),
+        )
+        result.export(output_dir)
+        summary = result.outcome
+        reporter.success(
+            f"Regional fit completed: {len(result.peaks)} peaks, "
+            f"{summary.statistics.n_observations} observations. Results: {output_dir}"
+        )
+    except (ValueError, TypeError, OSError, RuntimeError) as exc:
+        show_error_with_details("Regional fitting", exc)
+        raise typer.Exit(1) from exc

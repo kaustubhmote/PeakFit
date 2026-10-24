@@ -69,6 +69,7 @@ class SpectralParameters(BaseModel):
     nucleus: str | None = None  # Nucleus label: "1H", "15N", etc.
     td_size: int | None = None  # Acquisition-domain points (from header TDSIZE)
     ft_size: int | None = None  # Frequency-domain processed points (from header FTSIZE)
+    alias_size: int | None = None  # Original stored period in points, retained after a crop.
     dqfcosy_window: DQFCOSYWindow | None = None
     dqfcosy_window_error: str | None = None
     delta: float = Field(default=0.0, init=False)
@@ -193,6 +194,7 @@ class SpectralParameters(BaseModel):
             ppm2pt_i=self.ppm2pt_i,
             pts2hz_delta=self.pts2hz_delta,
             ppm2hz=self.ppm2hz,
+            alias_size=getattr(self, "alias_size", None),
         )
 
 

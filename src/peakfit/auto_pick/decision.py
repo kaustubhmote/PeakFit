@@ -29,7 +29,12 @@ def calculate_dof_scale_from_header(spectra: Spectra) -> float:
         if spectral_param.td_size is None:
             continue
 
-        ratio = float(spectral_param.td_size) / float(spectral_param.size)
+        # Frequency extraction changes the grid size, not the acquired-point fraction.
+        processed_size = spectral_param.size
+        alias_size = getattr(spectral_param, "alias_size", None)
+        if alias_size is not None:
+            processed_size = spectral_param.ft_size or alias_size
+        ratio = float(spectral_param.td_size) / float(processed_size)
         if np.isfinite(ratio) and ratio > 0.0:
             scale *= min(1.0, ratio)
     return float(max(scale, _FLOAT_EPS))
